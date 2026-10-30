@@ -1,7 +1,7 @@
 import { Component, useEffect, useMemo, useRef, type ReactNode, type MutableRefObject } from 'react';
 import {
   consumeEvents, createGame, emitPulse, getGuidance, getPathTiles, getVisibility,
-  isLaserActive, tickGame, TILE, type Input,
+  isLaserActive, tickGame, type Input,
 } from '../game/engine';
 import { audio } from '../game/audio';
 import type { Settings } from '../game/storage';
@@ -125,14 +125,15 @@ export function Game2D({ levelId, runKey, paused, settings, inputRef, sonarReq, 
   const ref = useCanvasLoop((ctx, w, h, dt, t) => {
     const g = game; const L = live.current; const s = st.current;
     const sig = SIGNAL_HEX[L.settings.color]; const red = '#ff3b55'; const k = L.settings.intensity;
-    if (!L.paused && !g.won) {
+    if (!L.paused && !g.won && !g.failed) {
       if (sonarReq.current) { sonarReq.current = false; if (emitPulse(g)) { s.echoes++; audio.play('sonar'); } }
       tickGame(g, inputRef.current, dt);
       for (const e of consumeEvents(g)) if (e !== 'sonar') audio.play(e);
     } else sonarReq.current = false;
     if (g.won && !s.reported) { s.reported = true; L.onWin({ steps: g.steps, seconds: g.elapsed, echoes: s.echoes }); }
 
-    const u = Math.min(w, h) / (w < h ? 9 : 11) / TILE * 1.0;
+    const CW = g.level.corridorWidth;
+    const u = Math.min(w, h) / (w < h ? 9 : 11) / 2.4;
     s.cam.x += (g.player.x - s.cam.x) * Math.min(1, dt * 8);
     s.cam.z += (g.player.z - s.cam.z) * Math.min(1, dt * 8);
     const X = (x: number) => w / 2 + (x - s.cam.x) * u;
@@ -143,7 +144,7 @@ export function Game2D({ levelId, runKey, paused, settings, inputRef, sonarReq, 
       if (s.phase !== g.phase) { s.phase = g.phase; s.tiles = getPathTiles(g); }
       for (const p of s.tiles) {
         const v = getVisibility(g, p.x, p.z) * k; if (v < 0.01) continue;
-        const z = TILE * 0.82 * u;
+        const z = CW * 0.82 * u;
         ctx.fillStyle = rgba(sig, v * 0.35); ctx.fillRect(X(p.x) - z / 2, Y(p.z) - z / 2, z, z);
       }
     }
@@ -174,17 +175,20 @@ export function Game2D({ levelId, runKey, paused, settings, inputRef, sonarReq, 
     g.hazards.forEach((hz, i) => {
       const near = Math.hypot(hz.x - g.player.x, hz.z - g.player.z);
       let v = getVisibility(g, hz.x, hz.z);
-      if (hz.kind === 'spike') v = Math.max(v, Math.max(0, 1 - near / (TILE * 1.6)) * 0.9);
+      if (hz.kind === 'spike') v = Math.max(v, Math.max(0, 1 - near / (CW * 1.6)) * 0.9);
       if (hz.kind === 'laser' && !isLaserActive(g, hz)) v *= 0.15;
       v = Math.min(1, v * k * 1.3); if (v < 0.01) return;
-      ctx.save(); ctx.translate(X(hz.x), Y(hz.z)); ctx.shadowColor = red; ctx.shadowBlur = 14 * v;
-      ctx.strokeStyle = rgba(red, v); ctx.fillStyle = rgba(red, v * 0.35); ctx.lineWidth = 1.5;
+      const hc = hz.kind === 'obstacle' ? '#5fe8ff' : red;
+      ctx.save(); ctx.translate(X(hz.x), Y(hz.z)); ctx.shadowColor = hc; ctx.shadowBlur = 14 * v;
+      ctx.strokeStyle = rgba(hc, v); ctx.fillStyle = rgba(hc, v * 0.35); ctx.lineWidth = 1.5;
       if (hz.kind === 'spike') {
         for (const dx of [-0.45, 0, 0.45]) for (const dz of [-0.4, 0.4]) {
           ctx.beginPath(); ctx.moveTo(dx * u, (dz - 0.18) * u); ctx.lineTo((dx + 0.15) * u, (dz + 0.15) * u); ctx.lineTo((dx - 0.15) * u, (dz + 0.15) * u); ctx.closePath(); ctx.fill(); ctx.stroke();
         }
       } else if (hz.kind === 'laser') {
-        ctx.fillRect(-TILE * u / 2, -2, TILE * u, 4);
+        ctx.fillRect(-CW * u / 2, -2, CW * u, 4);
+      } else if (hz.kind === 'obstacle') {
+        const b = CW * 0.55 * u; ctx.strokeRect(-b / 2, -b / 2, b, b); ctx.beginPath(); ctx.moveTo(-b / 2, -b / 2); ctx.lineTo(b / 2, b / 2); ctx.moveTo(b / 2, -b / 2); ctx.lineTo(-b / 2, b / 2); ctx.stroke();
       } else {
         ctx.rotate(t * 2.4 + i); ctx.strokeRect(-u * 0.3, -u * 0.3, u * 0.6, u * 0.6);
         ctx.beginPath(); ctx.arc(0, 0, u * 0.65, 0, Math.PI * 2); ctx.stroke();
@@ -194,7 +198,7 @@ export function Game2D({ levelId, runKey, paused, settings, inputRef, sonarReq, 
     // pulses
     for (const p of g.pulses) {
       const rad = Math.min(p.range, p.age * 10); const a = Math.max(0, 1 - rad / p.range) * k;
-      ctx.strokeStyle = rgba(sig, a); ctx.lineWidth = 2;
+      ctx.strokeStyle = rgba((p as { reflected?: boolean }).reflected ? '#9ef0ff' : sig, a); ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(X(p.x), Y(p.z), rad * u, 0, Math.PI * 2); ctx.stroke();
       if (g.level.theme === 'water') {
         ctx.strokeStyle = rgba('#3fe0d0', a * 0.6); ctx.lineWidth = 1;
@@ -217,7 +221,7 @@ export function Game2D({ levelId, runKey, paused, settings, inputRef, sonarReq, 
     if (s.hudT > 0.1) {
       s.hudT = 0;
       L.onHud({ steps: g.steps, echo: g.echo, elapsed: g.elapsed, guidance: getGuidance(g), warning: g.warning,
-        angleToExit: Math.atan2(g.exit.x - g.player.x, -(g.exit.z - g.player.z)), shiftIn: g.shiftIn, pulses: s.echoes });
+        angleToExit: Math.atan2(g.exit.x - g.player.x, -(g.exit.z - g.player.z)), shiftIn: g.shiftIn, pulses: s.echoes, failed: !!g.failed, stepLimit: g.stepLimit });
     }
   });
 

@@ -1,18 +1,11 @@
 /** Deterministic, renderer-independent simulation. All distances are world units. */
+import { LEVELS, type LevelDef } from './levels';
+export { LEVELS, TOTAL_LEVELS, type LevelDef } from './levels';
 export type Vec2 = { x: number; z: number };
 export type Cell = Vec2;
-export type LevelDef = {
-  id: number;
-  name: string;
-  subtitle: string;
-  description: string;
-  size: number;
-  theme: 'standard' | 'vault' | 'crystal' | 'water' | 'cyber' | 'void';
-  difficulty: string;
-};
 export type Wall = { x: number; z: number; w: number; d: number };
-export type Hazard = { x: number; z: number; kind: 'spike' | 'laser' | 'drone' };
-export type Pulse = { id: number; x: number; z: number; age: number; range: number };
+export type Hazard = { x: number; z: number; kind: 'spike' | 'laser' | 'drone' | 'obstacle' };
+export type Pulse = { id: number; x: number; z: number; age: number; range: number; reflected?: boolean };
 export type GameEvent = 'step' | 'sonar' | 'hazard' | 'win' | 'shift';
 export type Input = { x: number; z: number; stealth: boolean };
 export type GameState = {
@@ -24,6 +17,8 @@ export type GameState = {
   exit: Vec2;
   pulses: Pulse[];
   steps: number;
+  stepLimit: number;
+  failed: boolean;
   echo: number;
   elapsed: number;
   won: boolean;
@@ -35,33 +30,6 @@ export type GameState = {
   explored: Set<string>;
   visited: Set<string>;
 };
-
-const TITLES = [
-  ['The First Echo', 'Learn to listen', 'Every sound draws a fleeting map. Follow the exit signal through your first darkness.'],
-  ['Silent Passage', 'Trust the silence', 'Longer passages hide beyond the reach of a single echo.'],
-  ['Resonance Chamber', 'Sound leaves a trace', 'Listen for sharp reflections around branching corners.'],
-  ['The Hollow', 'Nothing is as it seems', 'Dead ends return your own footsteps. Learn when to turn back.'],
-  ['Echoes Below', 'Descend into darkness', 'Hidden spikes occupy forgotten passages. Watch for the red warning.'],
-  ['Blind Corners', 'A different perspective', 'A winding labyrinth rewards measured steps and deliberate pulses.'],
-  ['The Forgotten Wing', 'A place out of time', 'Abandoned corridors weave through a maze of fading memories.'],
-  ['Fractured Silence', 'Find the frequency', 'Your sonar is the only light. Allow it to recharge before the next crossing.'],
-  ['Deep Signal', 'Listen a little closer', 'The exit is distant, but its direction never disappears.'],
-  ['The Threshold', 'Beyond the familiar', 'A final conventional labyrinth prepares you for stranger acoustics.'],
-] as const;
-
-export const LEVELS: LevelDef[] = [
-  ...TITLES.map(([name, subtitle, description], i): LevelDef => ({
-    id: i + 1, name, subtitle, description,
-    size: 3 + Math.floor((i + 1) / 2),
-    theme: 'standard',
-    difficulty: i < 3 ? 'Initiate' : i < 7 ? 'Explorer' : 'Challenging',
-  })),
-  { id: 11, name: 'The Subterranean Vault', subtitle: 'Concrete remembers', description: 'Heavy concrete, tight right-angle corners and sharp, short-lived reflections. Echoes fade quickly inside this bunker.', size: 8, theme: 'vault', difficulty: 'Advanced' },
-  { id: 12, name: 'The Crystal Cavern', subtitle: 'Refractive echoes', description: 'Crystalline formations amplify and extend your sonar. Each pulse travels farther and leaves a longer luminous trace.', size: 9, theme: 'crystal', difficulty: 'Advanced' },
-  { id: 13, name: 'The Sunken Catacombs', subtitle: 'Tread softly', description: 'Running stirs the water and dampens sonar. Hold Shift or use the stealth control to move quietly and preserve your echo range.', size: 9, theme: 'water', difficulty: 'Expert' },
-  { id: 14, name: 'The Neon Cyber-Corridor', subtitle: 'You are not alone', description: 'Laser grids cycle on and off. Security drones hear manual sonar and move toward its source. Time your crossings.', size: 9, theme: 'cyber', difficulty: 'Expert' },
-  { id: 15, name: 'The Void Labyrinth', subtitle: 'The darkness moves', description: 'There are no walls. Invisible gravitational paths hover in space and rearrange every 30 seconds. An echo reveals safe footing.', size: 9, theme: 'void', difficulty: 'Transcendent' },
-];
 
 export const TILE = 2.4;
 const RADIUS = 0.25;
@@ -76,12 +44,15 @@ type Internals = {
   droneTarget: Vec2 | null;
   droneAlert: number;
   pulseCooldown: number;
+  obstacleOrigins: Map<Hazard, Vec2>;
+  droneRouteTime: number;
+  droneRoutes: Map<Hazard, Vec2>;
 };
 const internal = new WeakMap<GameState, Internals>();
 const key = (x: number, z: number) => `${x},${z}`;
 const dist = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.z - b.z);
-const toCell = (v: Vec2) => ({ x: Math.round(v.x / TILE), z: Math.round(v.z / TILE) });
-const toWorld = (v: Vec2) => ({ x: v.x * TILE, z: v.z * TILE });
+const toCell = (v: Vec2, tile = TILE) => ({ x: Math.round(v.x / tile), z: Math.round(v.z / tile) });
+const toWorld = (v: Vec2, tile = TILE) => ({ x: v.x * tile, z: v.z * tile });
 const DIRS = [{ x: 1, z: 0 }, { x: -1, z: 0 }, { x: 0, z: 1 }, { x: 0, z: -1 }];
 
 function random(seed: number) {
@@ -111,6 +82,25 @@ function generate(size: number, seed: number): number[][] {
   return grid;
 }
 
+function generateEasy(size: number, variant: number): number[][] {
+  const n = size * 2 + 1;
+  const grid = Array.from({ length: n }, () => Array<number>(n).fill(1));
+  // Long, unambiguous horizontal lanes teach navigation without hidden branches.
+  for (let z = 1; z < n - 1; z += 2) {
+    for (let x = 1; x < n - 1; x++) grid[z]![x] = 0;
+    if (z + 1 < n - 1) grid[z + 1]![(z % 4 === 1) ? n - 2 : 1] = 0;
+  }
+  // Distinct, forgiving shortcuts vary each cave without removing its long lanes.
+  const dividers: Cell[] = [];
+  for (let z = 2; z < n - 1; z += 2) {
+    for (let x = 1; x < n - 1; x++) if (grid[z]![x] === 1) dividers.push({ x, z });
+  }
+  dividers.forEach((p, bit) => {
+    if (bit < 6 && ((variant >>> bit) & 1)) grid[p.z]![p.x] = 0;
+  });
+  return grid;
+}
+
 function open(grid: number[][], x: number, z: number) {
   return grid[z]?.[x] === 0;
 }
@@ -132,18 +122,19 @@ function flood(grid: number[][], start: Cell) {
   return { queue, parents };
 }
 
-function wallsFor(grid: number[][]): Wall[] {
+function wallsFor(grid: number[][], tile: number): Wall[] {
   // Individual cells preserve accurate wavefront arrival at each wall segment.
   const walls: Wall[] = [];
   grid.forEach((row, z) => row.forEach((v, x) => {
-    if (v) walls.push({ x: x * TILE, z: z * TILE, w: TILE, d: TILE });
+    if (v) walls.push({ x: x * tile, z: z * tile, w: tile, d: tile });
   }));
   return walls;
 }
 
 export function createGame(id: number): GameState {
-  const level = LEVELS[Math.max(0, Math.min(14, Math.floor(id) - 1))]!;
-  const grid = generate(level.size, level.id * 8191 + 41);
+  const level = LEVELS[Math.max(0, Math.min(LEVELS.length - 1, Number.isFinite(id) ? Math.floor(id) - 1 : 0))]!;
+  const tile = level.corridorWidth;
+  const grid = level.tier === 'easy' ? generateEasy(level.size, level.id - 1) : generate(level.size, level.id * 8191 + 41);
   const { queue, parents } = flood(grid, { x: 1, z: 1 });
   const end = queue[queue.length - 1]!;
   const solution = new Set<string>();
@@ -152,24 +143,35 @@ export function createGame(id: number): GameState {
   const rng = random(id * 333);
   const candidates = queue.filter(q => !solution.has(key(q.x, q.z)) && q.x + q.z > 5);
   const hazards: Hazard[] = [];
-  if (id >= 5 && level.theme !== 'void') {
+  if (level.tier === 'medium' || level.tier === 'hard') {
     for (const q of candidates) {
-      if (rng() < 0.09 && hazards.length < 3 + Math.floor(id / 2)) {
-        hazards.push({ ...toWorld(q), kind: 'spike' });
+      if (rng() < 0.15 && hazards.length < (level.tier === 'hard' ? 10 : 5)) {
+        hazards.push({ ...toWorld(q, tile), kind: 'spike' });
       }
     }
   }
   if (level.theme === 'cyber') {
     // Gates on traversable passages are timed, never permanent obstacles.
     queue.filter(q => q.x + q.z > 6 && (q.x + q.z) % 7 === 0)
-      .slice(0, 5).forEach(q => hazards.push({ ...toWorld(q), kind: 'laser' }));
-    const q = queue[Math.floor(queue.length * 0.65)]!;
-    hazards.push({ ...toWorld(q), kind: 'drone' });
+      .slice(0, 5 + Math.floor((id - 67) / 8)).forEach(q => hazards.push({ ...toWorld(q, tile), kind: 'laser' }));
+    for (let i = 0; i < 1 + Math.floor((id - 67) / 12); i++) {
+      const q = queue[Math.floor(queue.length * (0.5 + i * 0.18))]!;
+      hazards.push({ ...toWorld(q, tile), kind: 'drone' });
+    }
   }
+  if (level.tier === 'easy') {
+    queue.filter(q => q.x > 1 && q.x < grid.length - 2 && q.x % 3 === 0 && q.z % 2 === 1)
+      .slice(0, 1 + Math.floor((id - 1) / 11))
+      .forEach(q => hazards.push({ ...toWorld(q, tile), kind: 'obstacle' }));
+  }
+  const minimumSteps = Math.ceil((solution.size - 1) * tile / 1.05);
+  const stepLimit = level.tier === 'expert'
+    ? Math.ceil(queue.length * tile * 4)
+    : Math.ceil(minimumSteps * (level.tier === 'easy' ? 3.5 : level.tier === 'medium' ? 2.7 : 2.2)) + 40;
   const state: GameState = {
-    level, grid, walls: level.theme === 'void' ? [] : wallsFor(grid), hazards,
-    player: toWorld({ x: 1, z: 1 }), exit: toWorld(end),
-    pulses: [], steps: 0, echo: 100, elapsed: 0, won: false,
+    level, grid, walls: level.theme === 'void' ? [] : wallsFor(grid, tile), hazards,
+    player: toWorld({ x: 1, z: 1 }, tile), exit: toWorld(end, tile),
+    pulses: [], steps: 0, stepLimit, failed: false, echo: 100, elapsed: 0, won: false,
     warning: '', warningTime: 0, heading: 0, shiftIn: 30, phase: 0,
     explored: new Set(), visited: new Set([key(1, 1)]),
   };
@@ -177,6 +179,8 @@ export function createGame(id: number): GameState {
     events: [], stepDistance: 0, pulseId: 0, hazardCooldown: 0,
     lastSafe: { ...state.player }, agitation: 0, droneTarget: null,
     droneAlert: 0, pulseCooldown: 0,
+    obstacleOrigins: new Map(hazards.filter(h => h.kind === 'obstacle').map(h => [h, { x: h.x, z: h.z }])),
+    droneRouteTime: 0, droneRoutes: new Map(),
   });
   return state;
 }
@@ -188,12 +192,20 @@ function addPulse(state: GameState, manual: boolean) {
   if (state.level.theme === 'vault') range *= 0.8;
   if (state.level.theme === 'water') range *= 1 - m.agitation * 0.68;
   state.pulses.push({ id: ++m.pulseId, ...state.player, age: 0, range });
-  if (state.pulses.length > MAX_PULSES) state.pulses.shift();
+  if (manual && state.level.theme === 'crystal') {
+    const facets = state.walls.filter(w => dist(w, state.player) < 8)
+      .sort((a, b) => dist(a, state.player) - dist(b, state.player)).slice(0, 2);
+    facets.forEach((w, i) => state.pulses.push({
+      id: ++m.pulseId, x: w.x, z: w.z, age: -dist(w, state.player) / 10 - 0.12,
+      range: range * (i === 0 ? 0.8 : 0.6), reflected: true,
+    }));
+  }
+  if (state.pulses.length > MAX_PULSES) state.pulses.splice(0, state.pulses.length - MAX_PULSES);
 }
 
 export function emitPulse(state: GameState): boolean {
   const m = internal.get(state);
-  if (!m || state.won || m.pulseCooldown > 0) return false;
+  if (!m || state.won || state.failed || m.pulseCooldown > 0) return false;
   if (state.echo < 14) {
     warn(state, 'SONAR RECHARGING — listen to your footsteps', 1.5);
     return false;
@@ -216,16 +228,18 @@ function warn(state: GameState, message: string, duration = 1.3) {
 }
 
 function collides(state: GameState, point: Vec2): boolean {
-  const c = toCell(point);
+  const tile = state.level.corridorWidth;
+  const c = toCell(point, tile);
   // The void has no walls: unsafe ground is handled as a fall, not a collision.
   if (state.level.theme === 'void') return false;
   for (let z = c.z - 1; z <= c.z + 1; z++) {
     for (let x = c.x - 1; x <= c.x + 1; x++) {
       if (open(state.grid, x, z)) continue;
-      if (Math.abs(point.x - x * TILE) < TILE / 2 + RADIUS &&
-          Math.abs(point.z - z * TILE) < TILE / 2 + RADIUS) return true;
+      if (Math.abs(point.x - x * tile) < tile / 2 + RADIUS &&
+          Math.abs(point.z - z * tile) < tile / 2 + RADIUS) return true;
     }
   }
+  if (state.hazards.some(h => h.kind === 'obstacle' && dist(point, h) < 0.66)) return true;
   return false;
 }
 
@@ -243,7 +257,8 @@ function hit(state: GameState, message: string) {
 
 function shiftVoid(state: GameState) {
   const next = generate(state.level.size, state.level.id * 8191 + 41 + state.phase * 97);
-  const c = toCell(state.player);
+  const tile = state.level.corridorWidth;
+  const c = toCell(state.player, tile);
   // A safe island at the current position and an L bridge to the original start
   // keep every reshuffle solvable, without teleporting the player.
   const safeX = Math.max(1, Math.min(next.length - 2, c.x));
@@ -251,7 +266,7 @@ function shiftVoid(state: GameState) {
   for (let x = 1; x <= safeX; x++) next[safeZ]![x] = 0;
   for (let z = 1; z <= safeZ; z++) next[z]![1] = 0;
   // Preserve the exit's bridge too: the goal never disappears.
-  const end = toCell(state.exit);
+  const end = toCell(state.exit, tile);
   for (let x = 1; x <= end.x; x++) next[end.z]![x] = 0;
   for (let z = 1; z <= end.z; z++) next[z]![1] = 0;
   state.grid = next;
@@ -269,7 +284,8 @@ export function isLaserActive(state: GameState, hazard: Hazard) {
 
 export function tickGame(state: GameState, input: Input, delta: number): void {
   const m = internal.get(state);
-  if (!m || state.won) return;
+  if (!m || state.won || state.failed) return;
+  const tile = state.level.corridorWidth;
   const dt = Math.min(0.05, Math.max(0, delta));
   state.elapsed += dt;
   state.warningTime = Math.max(0, state.warningTime - dt);
@@ -278,6 +294,10 @@ export function tickGame(state: GameState, input: Input, delta: number): void {
   m.pulseCooldown = Math.max(0, m.pulseCooldown - dt);
   m.hazardCooldown = Math.max(0, m.hazardCooldown - dt);
   m.droneAlert = Math.max(0, m.droneAlert - dt);
+  m.droneRouteTime -= dt;
+  for (const [obstacle, origin] of m.obstacleOrigins) {
+    obstacle.z = origin.z + Math.sin(state.elapsed * 0.45 + origin.x) * tile * 0.24;
+  }
   for (const pulse of state.pulses) pulse.age += dt;
   state.pulses = state.pulses.filter(p => p.age < (state.level.theme === 'crystal' ? 6.5 : 4.5));
 
@@ -308,27 +328,43 @@ export function tickGame(state: GameState, input: Input, delta: number): void {
     if (moved < 0.005 && state.warningTime === 0) warn(state, 'WALL DETECTED — try another direction', 0.7);
   }
 
-  const cell = toCell(state.player);
+  const cell = toCell(state.player, tile);
   state.visited.add(key(cell.x, cell.z));
-  const center = toWorld(cell);
+  const center = toWorld(cell, tile);
   if (state.level.theme === 'void' && !open(state.grid, cell.x, cell.z)) {
     hit(state, 'PATH LOST — returned to stable ground');
     state.player = { ...m.lastSafe };
   } else if (dist(center, state.player) < 0.25 &&
-             !state.hazards.some(h => dist(h, center) < TILE * 0.8)) {
+             !state.hazards.some(h => h.kind !== 'obstacle' && dist(h, center) < tile * 0.8)) {
     m.lastSafe = { ...center };
   }
 
   let nearbyHazard = false;
-  for (const hazard of state.hazards) {
-    if (hazard.kind === 'drone') {
-      const target = m.droneAlert > 0 && m.droneTarget ? m.droneTarget : state.exit;
-      // Drones stay inside corridors using the same grid pathfinding as the maze.
-      const hc = toCell(hazard);
-      const tc = toCell(target);
-      const { parents } = flood(state.grid, tc);
+  const drones = state.hazards.filter(h => h.kind === 'drone');
+  if (drones.length && m.droneRouteTime <= 0) {
+    const target = m.droneAlert > 0 && m.droneTarget ? m.droneTarget : state.exit;
+    const { parents } = flood(state.grid, toCell(target, tile));
+    for (const drone of drones) {
+      const previousGoal = m.droneRoutes.get(drone);
+      if (previousGoal && dist(drone, previousGoal) > 0.1) continue;
+      if (previousGoal) { drone.x = previousGoal.x; drone.z = previousGoal.z; }
+      const hc = toCell(drone, tile);
       const next = parents.get(key(hc.x, hc.z));
-      const goal = next ? toWorld(next) : target;
+      // Keep the current waypoint until its center is reached, then turn.
+      const goal = next ? toWorld(next, tile) : target;
+      m.droneRoutes.set(drone, goal);
+    }
+    m.droneRouteTime = 0.16;
+  }
+  for (const hazard of state.hazards) {
+    if (hazard.kind === 'obstacle') {
+      if (dist(hazard, state.player) < 1.6 && state.warningTime < 0.2) {
+        warn(state, 'MOVING OBSTACLE — pass slowly around the stone', 0.8);
+      }
+      continue;
+    }
+    if (hazard.kind === 'drone') {
+      const goal = m.droneRoutes.get(hazard) ?? hazard;
       const d = dist(hazard, goal);
       if (d > 0.1) {
         const speed = m.droneAlert > 0 ? 2.4 : 0.8;
@@ -349,8 +385,8 @@ export function tickGame(state: GameState, input: Input, delta: number): void {
   }
   if (nearbyHazard && state.warningTime < 0.3) {
     warn(state, 'HAZARD NEARBY — proceed with caution', 0.6);
-  } else if (moving && state.warningTime === 0 && dist(state.player, state.exit) > TILE &&
-      dist(state.player, toWorld({ x: 1, z: 1 })) > TILE * 2) {
+  } else if (moving && state.warningTime === 0 && dist(state.player, state.exit) > tile &&
+      dist(state.player, toWorld({ x: 1, z: 1 }, tile)) > tile * 2) {
     const neighbors = DIRS.filter(d => open(state.grid, cell.x + d.x, cell.z + d.z)).length;
     if (neighbors === 1) warn(state, 'DEAD END — retrace your steps', 1);
   }
@@ -368,7 +404,7 @@ export function tickGame(state: GameState, input: Input, delta: number): void {
   // instantly. Only scan near the player to keep per-frame work bounded.
   for (let z = Math.max(0, cell.z - 12); z < Math.min(state.grid.length, cell.z + 13); z++) {
     for (let x = Math.max(0, cell.x - 12); x < Math.min(state.grid.length, cell.x + 13); x++) {
-      if (open(state.grid, x, z) && getVisibility(state, x * TILE, z * TILE) > 0.2) {
+      if (open(state.grid, x, z) && getVisibility(state, x * tile, z * tile) > 0.2) {
         state.explored.add(key(x, z));
       }
     }
@@ -377,6 +413,10 @@ export function tickGame(state: GameState, input: Input, delta: number): void {
     state.won = true;
     m.events.push('win');
     warn(state, 'EXIT FOUND', 10);
+  } else if (state.steps >= state.stepLimit) {
+    state.failed = true;
+    m.events.push('hazard');
+    warn(state, 'STEP LIMIT REACHED — restart to try again', 10);
   }
 }
 
@@ -400,16 +440,17 @@ export function getGuidance(state: GameState): string {
   const dx = state.exit.x - state.player.x;
   const dz = state.exit.z - state.player.z;
   const distance = Math.hypot(dx, dz);
-  if (distance < TILE) return 'EXIT SIGNAL — within reach';
-  const north = dz < -TILE ? 'N' : dz > TILE ? 'S' : '';
-  const east = dx > TILE ? 'E' : dx < -TILE ? 'W' : '';
+  const tile = state.level.corridorWidth;
+  if (distance < tile) return 'EXIT SIGNAL — within reach';
+  const north = dz < -tile ? 'N' : dz > tile ? 'S' : '';
+  const east = dx > tile ? 'E' : dx < -tile ? 'W' : '';
   return `${north}${east || (!north ? 'N' : '')} · ${Math.ceil(distance)}m to exit signal`;
 }
 
 export function getPathTiles(state: GameState): Vec2[] {
   const tiles: Vec2[] = [];
   state.grid.forEach((row, z) => row.forEach((v, x) => {
-    if (!v) tiles.push({ x: x * TILE, z: z * TILE });
+    if (!v) tiles.push({ x: x * state.level.corridorWidth, z: z * state.level.corridorWidth });
   }));
   return tiles;
 }

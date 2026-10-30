@@ -1,3 +1,5 @@
+import { TOTAL_LEVELS } from './levels';
+
 export type Settings = {
   quality: 'low' | 'medium' | 'high';
   intensity: number;
@@ -44,7 +46,7 @@ export function loadProgress(): Progress {
   if (!raw || typeof raw !== 'object') return sessionProgress ?? { unlocked: 1, completed: {} };
   const completed: Progress['completed'] = {};
   if (raw.completed && typeof raw.completed === 'object') {
-    for (let id = 1; id <= 15; id++) {
+    for (let id = 1; id <= TOTAL_LEVELS; id++) {
       const best = raw.completed[String(id)];
       if (best && Number.isFinite(best.steps) && Number.isFinite(best.seconds) && Number.isFinite(best.echoes)) {
         completed[String(id)] = {
@@ -53,18 +55,20 @@ export function loadProgress(): Progress {
       }
     }
   }
-  return { unlocked: Math.floor(clamp(raw.unlocked, 1, 1, 15)), completed };
+  // A player who finished the former final level can continue at level 16.
+  const earned = Math.max(1, ...Object.keys(completed).map(id => Number(id) + 1));
+  return { unlocked: Math.min(TOTAL_LEVELS, Math.max(earned, Math.floor(clamp(raw.unlocked, 1, 1, TOTAL_LEVELS)))), completed };
 }
 export function completeLevel(id: number, steps: number, seconds: number, echoes: number): Progress {
   const progress = loadProgress();
-  if (!Number.isInteger(id) || id < 1 || id > progress.unlocked || id > 15) return progress;
+  if (!Number.isInteger(id) || id < 1 || id > progress.unlocked || id > TOTAL_LEVELS) return progress;
   const previous = progress.completed[String(id)];
   if (!previous || steps < previous.steps || (steps === previous.steps && seconds < previous.seconds)) {
     progress.completed[String(id)] = {
       steps: Math.max(0, steps), seconds: Math.max(0, seconds), echoes: Math.max(0, echoes),
     };
   }
-  progress.unlocked = Math.min(15, Math.max(progress.unlocked, id + 1));
+  progress.unlocked = Math.min(TOTAL_LEVELS, Math.max(progress.unlocked, id + 1));
   sessionProgress = progress;
   write(PROGRESS_KEY, progress);
   return progress;

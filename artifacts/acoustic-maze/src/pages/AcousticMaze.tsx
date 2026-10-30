@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronLeft, Ghost, Grid3x3, Lock, LogOut, Pause, Play, Radio, RotateCcw, Settings2, Home, SkipForward } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronLeft, ChevronRight, Ghost, Footprints, Locate, Grid3x3, Lock, LogOut, Pause, Play, Radio, RotateCcw, Settings2, Home, SkipForward } from 'lucide-react';
 import { LEVELS, type Input, type LevelDef } from '../game/engine';
 import { audio } from '../game/audio';
 import { completeLevel, loadProgress, loadSettings, saveSettings, type Progress, type Settings } from '../game/storage';
@@ -14,6 +14,8 @@ type Screen = 'menu' | 'gallery' | 'settings' | 'game' | 'exit';
 type Win = { steps: number; seconds: number; echoes: number };
 
 const WARN_HI: [string, string][] = [
+  ['MOVING OBSTACLE', 'चलती बाधा — पत्थर के किनारे से धीरे निकलें'],
+  ['STEP LIMIT REACHED', 'कदम सीमा समाप्त — फिर से कोशिश करें'],
   ['SONAR RECHARGING', 'सोनार चार्ज हो रहा है — अपने कदमों को सुनें'],
   ['SIGNAL DETECTED', 'संकेत पकड़ा गया — ड्रोन जाँच कर रहा है'],
   ['GRAVITATIONAL SHIFT', 'गुरुत्वीय बदलाव — नए रास्ते खोजें'],
@@ -46,6 +48,7 @@ export default function AcousticMaze() {
   const [paused, setPaused] = useState(false);
   const [win, setWin] = useState<Win | null>(null);
   const [hud, setHud] = useState<HudData | null>(null);
+  const failed = !!hud?.failed && !win;
   const L = tr(settings.language);
   const [gl, setGl] = useState<boolean>(() => hasWebGL2());
   const inputRef = useRef<Input>({ x: 0, z: 0, stealth: false });
@@ -86,14 +89,14 @@ export default function AcousticMaze() {
   useEffect(() => {
     if (screen !== 'game') return;
     const down = (e: KeyboardEvent) => {
-      if (e.code === 'Escape') { if (!win) setPause(!pausedRef.current); return; }
+      if (e.code === 'Escape') { if (!win && !failedRef.current) setPause(!pausedRef.current); return; }
       if (e.code === 'Space') { e.preventDefault(); if (!pausedRef.current) sonarReq.current = true; return; }
       if (e.code.startsWith('Arrow')) e.preventDefault();
       keys.current.add(e.code); recompute();
     };
     const up = (e: KeyboardEvent) => { keys.current.delete(e.code); recompute(); };
-    const hide = () => { if (document.hidden && !winRef.current) setPause(true); };
-    const blur = () => { if (!winRef.current) setPause(true); };
+    const hide = () => { if (document.hidden && !winRef.current && !failedRef.current) setPause(true); };
+    const blur = () => { if (!winRef.current && !failedRef.current) setPause(true); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up);
     document.addEventListener('visibilitychange', hide); window.addEventListener('blur', blur);
     return () => {
@@ -103,6 +106,7 @@ export default function AcousticMaze() {
   }, [screen, recompute, setPause, win]);
   const pausedRef = useRef(paused); pausedRef.current = paused;
   const winRef = useRef(win); winRef.current = win;
+  const failedRef = useRef(failed); failedRef.current = failed;
 
   const onWin = useCallback((r: Win) => {
     setProgress(completeLevel(levelId, r.steps, Math.round(r.seconds), r.echoes));
@@ -117,7 +121,7 @@ export default function AcousticMaze() {
       {screen === 'game' ? (
         <div className="fixed inset-0">
           {(() => {
-            const common = { levelId, runKey, paused: paused || !!win, settings, inputRef, sonarReq, onHud: setHud, onWin };
+            const common = { levelId, runKey, paused: paused || !!win || failed, settings, inputRef, sonarReq, onHud: setHud, onWin };
             const flat = <Game2D {...common} label={L.compat} />;
             return gl ? (
               <SceneBoundary fallback={flat} onFail={() => setGl(false)}>
@@ -127,7 +131,19 @@ export default function AcousticMaze() {
           })()}
           <GameHud L={L} level={level} hud={hud} lang={settings.language} onPause={() => setPause(true)}
             onSonar={() => { unlock(); sonarReq.current = true; }} pad={pad} recompute={recompute} />
-          {paused && !win && (
+          {failed && (
+            <Overlay>
+              <p className="font-data text-xs tracking-[0.3em] text-[hsl(var(--sig-red))] uppercase">{L.level} {String(level.id).padStart(2, '0')} / {LEVELS.length} · {L.stepBudget} {hud?.stepLimit}</p>
+              <h2 className="neon-title mt-2 text-4xl sm:text-5xl" data-testid="text-failed">{L.failedTitle}</h2>
+              <p className="mt-4 text-sm text-muted-foreground">{L.failedBody}</p>
+              <div className="mt-6 grid gap-2">
+                <PanelBtn testid="button-fail-restart" primary icon={<RotateCcw size={18} />} onClick={() => startLevel(levelId)}>{L.restart}</PanelBtn>
+                <PanelBtn testid="button-fail-gallery" icon={<Grid3x3 size={18} />} onClick={() => go('gallery')}>{L.toGallery}</PanelBtn>
+                <PanelBtn testid="button-fail-menu" icon={<Home size={18} />} onClick={() => go('menu')}>{L.toMenu}</PanelBtn>
+              </div>
+            </Overlay>
+          )}
+          {paused && !win && !failed && (
             <Overlay>
               <p className="font-data text-xs tracking-[0.3em] sig-text uppercase">{L.level} {String(level.id).padStart(2, '0')}</p>
               <h2 className="neon-title mt-2 text-4xl sm:text-5xl">{L.paused}</h2>
@@ -176,7 +192,7 @@ export default function AcousticMaze() {
           <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_30%_50%,transparent_20%,hsl(230_45%_3%/0.85)_75%)]" />
           {screen === 'menu' && <MenuScreen L={L} startId={startId} progress={progress} onStart={() => startLevel(startId)}
             onGo={(s) => { unlock(); go(s); }} />}
-          {screen === 'gallery' && <Gallery L={L} progress={progress} onBack={() => go('menu')} onPlay={startLevel} />}
+          {screen === 'gallery' && <Gallery L={L} progress={progress} focusId={screen === 'gallery' && prev === 'game' ? levelId : startId} onBack={() => go('menu')} onPlay={startLevel} />}
           {screen === 'settings' && <SettingsPanel L={L} s={settings} set={setSettings} onBack={() => go(prev === 'settings' ? 'menu' : prev === 'game' ? 'menu' : prev)} />}
           {screen === 'exit' && <ExitScreen L={L} onBack={() => go('menu')} />}
         </>
@@ -225,16 +241,28 @@ function MenuScreen({ L, startId, progress, onStart, onGo }: { L: Strings; start
     <div className="relative z-10 flex min-h-[100dvh] flex-col justify-between gap-8 p-5 sm:p-10 lg:p-14">
       <header className="rise flex items-center justify-between font-data text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
         <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[hsl(var(--sig))]" />SONAR ONLINE</span>
-        <span data-testid="text-progress">{L.progress} {done}/15</span>
+        <span data-testid="text-progress">{L.progress} {done}/{LEVELS.length}</span>
       </header>
       <div className="grid items-end gap-10 lg:grid-cols-[1.3fr_1fr]">
         <div>
-          <p className="rise font-data text-xs uppercase tracking-[0.4em] sig-text" style={{ animationDelay: '.1s' }}>// 15 chambers · 0 lux</p>
+          <p className="rise font-data text-xs uppercase tracking-[0.4em] sig-text" style={{ animationDelay: '.1s' }}>// {LEVELS.length} {L.chambers} · 0 lux</p>
           <h1 className="rise mt-3 text-[clamp(3.2rem,12vw,9rem)]" style={{ animationDelay: '.2s' }}>
             <span className="neon-title block">ACOUSTIC</span>
             <span className="neon-outline block tracking-[0.12em]">MAZE</span>
           </h1>
           <p className="rise mt-5 max-w-md text-lg text-[hsl(214_30%_78%)]" style={{ animationDelay: '.35s' }}>{L.tagline}</p>
+          <div className="rise mt-6 max-w-md" style={{ animationDelay: '.4s' }}>
+            <div className="flex h-1.5 gap-px overflow-hidden rounded" data-testid="bar-progress">
+              {TIERS.map((tr0) => {
+                const n = LEVELS.filter((l) => l.tier === tr0.id);
+                const c = n.filter((l) => progress.completed[String(l.id)]).length;
+                return <div key={tr0.id} className="relative h-full bg-white/10" style={{ flex: n.length }}><div className="h-full origin-left bg-[hsl(var(--sig))]" style={{ transform: `scaleX(${n.length ? c / n.length : 0})` }} /></div>;
+              })}
+            </div>
+            <div className="mt-2 flex justify-between font-data text-[10px] uppercase tracking-widest text-muted-foreground">
+              {TIERS.map((tr0) => <span key={tr0.id}>{L[tr0.key]}</span>)}
+            </div>
+          </div>
         </div>
         <nav className="rise glass-soft max-w-md rounded-xl p-2 lg:justify-self-end lg:w-full" style={{ animationDelay: '.45s' }}>
           {items.map(([title, sub, icon, fn, id], i) => (
@@ -254,6 +282,7 @@ function MenuScreen({ L, startId, progress, onStart, onGo }: { L: Strings; start
         <Kbd k="WASD / ←↑→↓" v={L.ctrlMove} /><Kbd k="SPACE / CLICK" v={L.ctrlSonar} />
         <Kbd k="SHIFT" v={L.ctrlStealth} /><Kbd k="ESC" v={L.ctrlPause} />
         <span className="sm:basis-full">{L.ctrlTouch}</span>
+        <span className="flex items-center gap-2 sm:basis-full"><Footprints size={14} className="sig-text" />{L.stepHint}</span>
       </footer>
     </div>
   );
@@ -295,7 +324,20 @@ function Thumb({ lv, locked }: { lv: LevelDef; locked: boolean }) {
   );
 }
 
-function Gallery({ L, progress, onBack, onPlay }: { L: Strings; progress: Progress; onBack: () => void; onPlay: (id: number) => void }) {
+const TIERS = [
+  { id: 'easy', key: 'tierEasy' }, { id: 'medium', key: 'tierMedium' }, { id: 'hard', key: 'tierHard' }, { id: 'expert', key: 'tierExpert' },
+] as const;
+const PER = 12;
+
+function Gallery({ L, progress, focusId, onBack, onPlay }: { L: Strings; progress: Progress; focusId: number; onBack: () => void; onPlay: (id: number) => void }) {
+  const pages = Math.ceil(LEVELS.length / PER);
+  const pageOf = (id: number) => Math.min(pages - 1, Math.floor((Math.max(1, id) - 1) / PER));
+  const [page, setPage] = useState(() => pageOf(focusId));
+  const slice = LEVELS.slice(page * PER, page * PER + PER);
+  const first = slice[0]?.id ?? 1, last = slice[slice.length - 1]?.id ?? 1;
+  const latest = Math.min(progress.unlocked, LEVELS.length);
+  const tierStart = (id: string) => LEVELS.find((l) => l.tier === id)?.id ?? 1;
+  const curTier = slice[0]?.tier;
   return (
     <div className="relative z-10 mx-auto min-h-[100dvh] max-w-7xl p-5 sm:p-10">
       <div className="rise flex flex-wrap items-end justify-between gap-4">
@@ -303,26 +345,46 @@ function Gallery({ L, progress, onBack, onPlay }: { L: Strings; progress: Progre
           <button data-testid="button-back-gallery" onClick={onBack} className="mb-4 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft size={16} />{L.back}</button>
           <h2 className="neon-title text-4xl sm:text-6xl">{L.gallery}</h2>
         </div>
-        <p className="font-data text-xs uppercase tracking-[0.3em] text-muted-foreground">{L.progress} <span className="sig-text">{Object.keys(progress.completed).length}</span>/15</p>
+        <p className="font-data text-xs uppercase tracking-[0.3em] text-muted-foreground">{L.progress} <span className="sig-text">{Object.keys(progress.completed).length}</span>/{LEVELS.length}</p>
       </div>
-      <div className="mt-8 grid grid-cols-1 gap-4 pb-10 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {LEVELS.map((lv, i) => {
+      <div className="rise mt-6 grid gap-3" style={{ animationDelay: '.1s' }}>
+        <div className="grid grid-cols-2 gap-1 rounded-lg border border-white/10 bg-black/20 p-1 sm:grid-cols-4">
+          {TIERS.map((tr0) => {
+            const lv = LEVELS.filter((l) => l.tier === tr0.id);
+            const lo = lv[0]?.id ?? 0, hi = lv[lv.length - 1]?.id ?? 0;
+            const on = curTier === tr0.id;
+            return (
+              <button key={tr0.id} data-testid={`button-tier-${tr0.id}`} onClick={() => setPage(pageOf(tierStart(tr0.id)))}
+                className={`flex flex-col items-start rounded-md px-3 py-2 text-left transition-all ${on ? 'bg-[hsl(var(--sig)/0.18)] sig-glow' : 'text-muted-foreground hover:bg-white/5'}`}>
+                <span className="text-sm font-semibold">{L[tr0.key]}</span>
+                <span className="font-data text-[10px] tracking-widest">{String(lo).padStart(2, '0')}–{String(hi).padStart(2, '0')}{tierStart(tr0.id) > progress.unlocked ? ` · ${L.locked}` : ''}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="font-data text-xs uppercase tracking-[0.25em] text-muted-foreground" data-testid="text-page-range">{L.page} {page + 1}/{pages} · <span className="sig-text">{String(first).padStart(2, '0')}–{String(last).padStart(2, '0')}</span></p>
+          <button data-testid="button-jump-latest" onClick={() => setPage(pageOf(latest))} className="flex items-center gap-1.5 rounded-md border border-white/10 px-3 py-1.5 font-data text-[11px] uppercase tracking-widest text-muted-foreground transition-colors hover:border-[hsl(var(--sig)/0.5)] hover:text-foreground"><Locate size={13} />{L.jumpLatest} {String(latest).padStart(2, '0')}</button>
+        </div>
+      </div>
+      <div key={page} className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {slice.map((lv, i) => {
           const locked = lv.id > progress.unlocked;
           const rec = progress.completed[String(lv.id)];
           return (
             <button key={lv.id} data-testid={`card-level-${lv.id}`} disabled={locked} onClick={() => onPlay(lv.id)}
               title={locked ? L.lockedHint : lv.description}
-              className={`group rise glass flex flex-col overflow-hidden rounded-xl text-left transition-all duration-300 ${locked ? 'cursor-not-allowed opacity-60' : 'hover:-translate-y-1 hover:border-[hsl(var(--sig)/0.6)]'}`}
-              style={{ animationDelay: `${i * 0.035}s` }}>
+              className={`group rise glass flex flex-col overflow-hidden rounded-xl text-left transition-all duration-300 ${locked ? 'cursor-not-allowed opacity-60' : 'hover:-translate-y-1 hover:border-[hsl(var(--sig)/0.6)]'} ${lv.id === latest ? 'border-[hsl(var(--sig)/0.6)]' : ''}`}
+              style={{ animationDelay: `${i * 0.03}s` }}>
               <div className="relative aspect-[4/3] bg-[hsl(230_45%_3%/0.7)]">
                 <Thumb lv={lv} locked={locked} />
-                <span className="absolute left-3 top-3 font-data text-xs text-muted-foreground">{String(lv.id).padStart(2, '0')}</span>
+                <span className="absolute left-3 top-3 font-data text-xs text-muted-foreground">{String(lv.id).padStart(2, '0')}/{LEVELS.length}</span>
                 <span className="absolute right-3 top-3 rounded-full border border-white/10 px-2 py-0.5 font-data text-[10px] uppercase tracking-wider text-muted-foreground">{lv.theme}</span>
                 {locked && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground"><Lock size={22} /><span className="font-data text-[10px] uppercase tracking-[0.3em]">{L.locked}</span></div>}
               </div>
               <div className="flex flex-1 flex-col gap-1 p-4">
                 <span className="font-display text-base font-bold leading-tight">{lv.name}</span>
-                <span className="text-xs text-muted-foreground">{lv.subtitle} · {lv.difficulty}</span>
+                <span className="text-xs text-muted-foreground">{lv.region ?? lv.subtitle} · {L[TIERS.find((x) => x.id === lv.tier)?.key ?? 'tierEasy']}</span>
                 <div className="mt-auto flex items-center justify-between pt-3 font-data text-[11px]">
                   {rec ? <span className="sig-text">{L.cleared} · {rec.steps} {L.steps.toLowerCase()} · {fmt(rec.seconds)}</span>
                     : <span className="text-muted-foreground">{locked ? L.lockedHint : '—'}</span>}
@@ -333,6 +395,19 @@ function Gallery({ L, progress, onBack, onPlay }: { L: Strings; progress: Progre
           );
         })}
       </div>
+      <nav className="flex flex-wrap items-center justify-center gap-2 py-8" aria-label={L.page}>
+        <button data-testid="button-page-prev" disabled={page === 0} onClick={() => setPage(page - 1)} className="flex h-11 items-center gap-1 rounded-lg border border-white/10 px-3 text-sm transition-colors hover:border-[hsl(var(--sig)/0.5)] disabled:opacity-30"><ChevronLeft size={16} />{L.prevPage}</button>
+        <div className="flex flex-wrap justify-center gap-1">
+          {Array.from({ length: pages }).map((_, p) => {
+            const lo = p * PER + 1; const sealed = lo > progress.unlocked;
+            return (
+              <button key={p} data-testid={`button-page-${p + 1}`} onClick={() => setPage(p)} aria-current={p === page}
+                className={`h-11 min-w-11 rounded-lg px-2 font-data text-xs transition-all ${p === page ? 'border border-[hsl(var(--sig)/0.7)] bg-[hsl(var(--sig)/0.16)] sig-glow' : sealed ? 'border border-white/5 text-muted-foreground/50' : 'border border-white/10 text-muted-foreground hover:text-foreground'}`}>{p + 1}</button>
+            );
+          })}
+        </div>
+        <button data-testid="button-page-next" disabled={page >= pages - 1} onClick={() => setPage(page + 1)} className="flex h-11 items-center gap-1 rounded-lg border border-white/10 px-3 text-sm transition-colors hover:border-[hsl(var(--sig)/0.5)] disabled:opacity-30">{L.nextPage}<ChevronRight size={16} /></button>
+      </nav>
     </div>
   );
 }
@@ -426,13 +501,16 @@ function GameHud({ L, level, hud, lang, onPause, onSonar, pad, recompute }: {
     <div className="pointer-events-none absolute inset-0 z-30 select-none">
       <div className="flex items-start justify-between gap-3 p-3 sm:p-5">
         <div className="glass-soft fadein rounded-xl px-4 py-3">
-          <p className="font-data text-[10px] uppercase tracking-[0.3em] sig-text">{L.level} {String(level.id).padStart(2, '0')} · {level.theme}</p>
+          <p className="font-data text-[10px] uppercase tracking-[0.3em] sig-text">{L.level} <span data-testid="text-level-index">{String(level.id).padStart(2, '0')}/{LEVELS.length}</span> · {L[TIERS.find((x) => x.id === level.tier)?.key ?? 'tierEasy']}</p>
           <p className="font-display text-base font-bold sm:text-lg" data-testid="text-level-name">{level.name}</p>
           <div className="mt-2 flex gap-5 font-data text-sm">
             <Stat k={L.steps} v={String(hud?.steps ?? 0)} id="steps" />
+            <Stat k={L.stepBudget} v={hud?.stepLimit ? `${Math.max(0, hud.stepLimit - hud.steps)} ${L.stepsLeft}` : '—'} id="step-budget" />
             <Stat k={L.time} v={fmt(hud?.elapsed ?? 0)} id="time" />
             {level.theme === 'void' && <Stat k="Shift" v={`${Math.ceil(hud?.shiftIn ?? 30)}s`} id="shift" />}
           </div>
+          <div className="mt-2 h-1 w-40 overflow-hidden rounded bg-white/10" data-testid="bar-level-progress"><div className="h-full origin-left bg-[hsl(214_60%_94%/0.6)]" style={{ transform: `scaleX(${level.id / LEVELS.length})` }} /></div>
+          {hud?.stepLimit ? <div className="mt-1 h-1 w-40 overflow-hidden rounded bg-white/10"><div className={`h-full origin-left transition-transform ${hud.steps / hud.stepLimit > 0.8 ? 'bg-[hsl(var(--sig-red))]' : 'bg-[hsl(var(--sig)/0.7)]'}`} style={{ transform: `scaleX(${Math.max(0, 1 - hud.steps / hud.stepLimit)})` }} /></div> : null}
           <div className="mt-2">
             <div className="flex justify-between font-data text-[10px] uppercase tracking-widest text-muted-foreground"><span>{L.echo}</span><span data-testid="text-echo" className={echo < 14 ? 'text-[hsl(var(--sig-red))]' : 'sig-text'}>{echo}%</span></div>
             <div className="mt-1 h-1 w-40 overflow-hidden rounded bg-white/10"><div className="h-full origin-left bg-[hsl(var(--sig))] transition-transform duration-150" style={{ transform: `scaleX(${echo / 100})` }} /></div>

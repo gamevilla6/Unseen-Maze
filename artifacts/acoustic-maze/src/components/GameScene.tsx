@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   consumeEvents, createGame, emitPulse, getGuidance, getPathTiles, getVisibility,
-  isLaserActive, tickGame, TILE, type GameState, type Input,
+  isLaserActive, tickGame, type GameState, type Input,
 } from '../game/engine';
 import { audio } from '../game/audio';
 import type { Settings } from '../game/storage';
@@ -12,6 +12,7 @@ import { SIGNAL_HEX } from '../i18n';
 export type HudData = {
   steps: number; echo: number; elapsed: number; guidance: string; warning: string;
   angleToExit: number; shiftIn: number; pulses: number;
+  failed: boolean; stepLimit: number;
 };
 
 type Props = {
@@ -27,6 +28,7 @@ const THEME_TINT: Record<string, string> = {
 function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, onWin }: Props) {
   const game = useMemo<GameState>(() => createGame(levelId), [levelId, runKey]);
   const theme = game.level.theme;
+  const CW = game.level.corridorWidth;
   const pausedRef = useRef(paused); pausedRef.current = paused;
   const cb = useRef({ onHud, onWin }); cb.current = { onHud, onWin };
   const echoes = useRef(0);
@@ -43,6 +45,8 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
     return c;
   }, [sig, theme]);
   const danger = useMemo(() => new THREE.Color('#ff3b55'), []);
+  const crystalTint = useMemo(() => new THREE.Color('#9ef0ff'), []);
+  const safe = useMemo(() => new THREE.Color('#5fe8ff'), []);
   const wallH = theme === 'vault' ? 3.4 : theme === 'crystal' ? 1.4 : 1.8;
   const thick = theme === 'vault' ? 1.12 : 1;
   const k = settings.intensity;
@@ -89,7 +93,7 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
     const g = game;
     const dt = Math.min(rawDt, 0.05);
     const t = st.clock.elapsedTime;
-    if (!pausedRef.current && !g.won) {
+    if (!pausedRef.current && !g.won && !g.failed) {
       if (sonarReq.current) {
         sonarReq.current = false;
         if (emitPulse(g)) { echoes.current++; audio.play('sonar'); }
@@ -144,14 +148,14 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
       const grp = hz.current[i]; if (!grp) return;
       const near = Math.hypot(h.x - g.player.x, h.z - g.player.z);
       let v = getVisibility(g, h.x, h.z);
-      if (h.kind === 'spike') v = Math.max(v, Math.max(0, 1 - near / (TILE * 1.6)) * 0.9);
+      if (h.kind === 'spike') v = Math.max(v, Math.max(0, 1 - near / (CW * 1.6)) * 0.9);
       let on = 1;
       if (h.kind === 'laser') on = isLaserActive(g, h) ? 1 : 0.12;
       grp.position.set(h.x, h.kind === 'drone' ? 1.1 + Math.sin(t * 3 + i) * 0.15 : 0, h.z);
       if (h.kind === 'drone') grp.rotation.y = t * 2.4;
       grp.traverse((o) => {
         const mat = (o as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
-        if (mat && mat.color) mat.color.copy(danger).multiplyScalar(Math.min(1, v) * on * k * (settings.color === 'red' ? 2.2 : 1.4));
+        if (mat && mat.color) mat.color.copy(h.kind === 'obstacle' ? safe : danger).multiplyScalar(Math.min(1, v) * on * k * (settings.color === 'red' ? 2.2 : 1.4));
       });
     });
     // exit
@@ -164,11 +168,12 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
     rings.current.forEach((r, i) => {
       const p = g.pulses[i];
       const rm = ripples.current[i];
+      const mat = r.material as THREE.MeshBasicMaterial;
       if (!p) { r.visible = false; if (rm) rm.visible = false; return; }
       const rad = Math.min(p.range, p.age * 10);
       const a = Math.max(0, 1 - rad / p.range) * k;
       r.visible = true; r.position.set(p.x, 0.04, p.z); r.scale.setScalar(Math.max(0.05, rad));
-      (r.material as THREE.MeshBasicMaterial).opacity = a;
+      mat.opacity = a; mat.color.copy(p && (p as { reflected?: boolean }).reflected ? crystalTint : sig);
       if (rm) {
         rm.visible = theme === 'water';
         rm.position.set(p.x, 0.03, p.z); rm.scale.setScalar(Math.max(0.05, rad * 0.72));
@@ -195,6 +200,7 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
       cb.current.onHud({
         steps: g.steps, echo: g.echo, elapsed: g.elapsed, guidance: getGuidance(g), warning: g.warning,
         angleToExit: Math.atan2(g.exit.x - g.player.x, -(g.exit.z - g.player.z)), shiftIn: g.shiftIn, pulses: echoes.current,
+        failed: !!g.failed, stepLimit: g.stepLimit,
       });
     }
   });
@@ -221,7 +227,7 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
       )}
       {theme === 'void' && (
         <instancedMesh ref={tiles} args={[undefined, undefined, 400]} frustumCulled={false}>
-          <boxGeometry args={[TILE * 0.82, 0.06, TILE * 0.82]} />
+          <boxGeometry args={[CW * 0.82, 0.06, CW * 0.82]} />
           <meshBasicMaterial {...additive} />
         </instancedMesh>
       )}
@@ -235,10 +241,13 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
           )))}
           {h.kind === 'laser' && (
             <>
-              <mesh position-y={0.7}><boxGeometry args={[TILE, 0.05, 0.05]} /><meshBasicMaterial {...additive} /></mesh>
-              <mesh position-y={0.35}><boxGeometry args={[TILE, 0.05, 0.05]} /><meshBasicMaterial {...additive} /></mesh>
-              <mesh position-y={0.01} rotation-x={-Math.PI / 2}><planeGeometry args={[TILE, 0.6]} /><meshBasicMaterial {...additive} /></mesh>
+              <mesh position-y={0.7}><boxGeometry args={[CW, 0.05, 0.05]} /><meshBasicMaterial {...additive} /></mesh>
+              <mesh position-y={0.35}><boxGeometry args={[CW, 0.05, 0.05]} /><meshBasicMaterial {...additive} /></mesh>
+              <mesh position-y={0.01} rotation-x={-Math.PI / 2}><planeGeometry args={[CW, 0.6]} /><meshBasicMaterial {...additive} /></mesh>
             </>
+          )}
+          {h.kind === 'obstacle' && (
+            <mesh position-y={0.55}><boxGeometry args={[CW * 0.55, 1.1, CW * 0.55]} /><meshBasicMaterial wireframe {...additive} /></mesh>
           )}
           {h.kind === 'drone' && (
             <>

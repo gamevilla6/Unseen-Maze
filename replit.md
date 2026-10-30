@@ -1,6 +1,6 @@
 # Acoustic Maze
 
-A browser-based 3D puzzle game in which players use temporary sonar echoes to navigate fifteen pitch-black labyrinths.
+A browser-based 3D puzzle game in which players use temporary sonar echoes to navigate exactly 99 pitch-black labyrinths.
 
 ## Run & Operate
 
@@ -31,7 +31,7 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 ## Product
 
-Fifteen progressively unlocked levels, including the Subterranean Vault, Crystal Cavern, Sunken Catacombs, Neon Cyber-Corridor, and Void Labyrinth. Sonar and footsteps briefly expose geometry; hazards issue proximity warnings. Settings and progress are saved in the browser. English and Hindi interface options, Web Audio soundscapes, and touch/keyboard controls are included.
+Exactly 99 progressively unlocked levels: 1–33 Easy / Whispering Caves, 34–66 Medium / Subterranean Vault and Crystal Cavern, 67–90 Hard / Sunken Catacombs and Neon Cyber-Corridors, 91–99 Expert / Void Labyrinth. Easy corridors are wider with slow obstacles and generous step budgets; later tiers add refractive echoes, spikes, stealth-sensitive water, drones, timed lasers and 30-second void reshuffles. The level gallery is paginated. Sonar and footsteps briefly expose geometry; hazards issue proximity warnings. Settings and progress are saved in the browser. English and Hindi interface options, Web Audio soundscapes, and touch/keyboard controls are included.
 
 ## User preferences
 
