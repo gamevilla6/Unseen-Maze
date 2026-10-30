@@ -322,7 +322,7 @@ export function tickGame(state: GameState, input: Input, delta: number): void {
       m.events.push('step');
       addPulse(state, false);
       if (state.level.theme === 'water' && m.agitation > 0.55) {
-        warn(state, 'WATER DISTURBED — hold Shift to move quietly', 1.3);
+        warn(state, 'WATER DISTURBED — use a short, slow swipe', 1.3);
       }
     }
     if (moved < 0.005 && state.warningTime === 0) warn(state, 'WALL DETECTED — try another direction', 0.7);

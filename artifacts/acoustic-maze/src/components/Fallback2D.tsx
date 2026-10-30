@@ -227,9 +227,8 @@ export function Game2D({ levelId, runKey, paused, settings, inputRef, sonarReq, 
 
   return (
     <div className="relative h-full w-full bg-[#000000]">
-      <canvas ref={ref} className="h-full w-full" style={{ touchAction: 'none' }} data-testid="canvas-2d-game"
-        onPointerDown={() => { sonarReq.current = true; }} />
-      <span data-testid="status-compat-mode" className="pointer-events-none absolute bottom-32 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/15 bg-black/60 px-3 py-1 font-data text-[10px] uppercase tracking-[0.2em] text-[hsl(214_30%_75%)] sm:bottom-8">{label}</span>
+      <canvas ref={ref} className="h-full w-full" style={{ touchAction: 'none' }} data-testid="canvas-2d-game" />
+      <span data-testid="status-compat-mode" className="pointer-events-none absolute top-[calc(env(safe-area-inset-top)+7.5rem)] left-1/2 z-30 max-w-[92vw] truncate -translate-x-1/2 whitespace-nowrap rounded-full border border-white/15 bg-black/60 px-3 py-1 font-data text-[10px] uppercase tracking-[0.2em] text-[hsl(214_30%_75%)] ">{label}</span>
     </div>
   );
 }

@@ -303,7 +303,7 @@ function World({ levelId, runKey, paused, settings, inputRef, sonarReq, onHud, o
   );
 }
 
-export default function GameScene(props: Props) {
+export default function GameScene({ onLost, ...props }: Props & { onLost?: () => void }) {
   const q = props.settings.quality;
   const dpr: [number, number] = q === 'high' ? [1, 2] : q === 'medium' ? [1, 1.4] : [0.75, 1];
   return (
@@ -312,8 +312,10 @@ export default function GameScene(props: Props) {
       dpr={dpr}
       gl={{ antialias: q !== 'low', powerPreference: q === 'low' ? 'low-power' : 'high-performance' }}
       camera={{ fov: 45, near: 0.1, far: 120, position: [2.4, 16, 12] }}
-      onPointerDown={() => { props.sonarReq.current = true; }}
       style={{ touchAction: 'none' }}
+      onCreated={({ gl }) => {
+        gl.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); onLost?.(); }, { once: true });
+      }}
     >
       <color attach="background" args={['#000000']} />
       <World {...props} />

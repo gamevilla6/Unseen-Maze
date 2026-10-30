@@ -107,10 +107,12 @@
 
 @layer base {
   * { @apply border-border; }
-  html, body, #root { height: 100%; background: hsl(230 45% 3%); }
+  html, body, #root { min-height: 100%; background: hsl(230 45% 3%); }
+  html { -webkit-text-size-adjust: 100%; }
+  html.playing, html.playing body { overscroll-behavior: none; overflow: hidden; height: 100%; }
+  input, select, textarea { font-size: 16px; }
   body {
     @apply font-sans antialiased bg-background text-foreground;
-    overscroll-behavior: none;
     -webkit-tap-highlight-color: transparent;
   }
 }
@@ -253,13 +255,18 @@
 .ping-ring { animation: ping-ring 1.8s cubic-bezier(.1,.6,.3,1) infinite; }
 @keyframes warn { 0% { opacity: 0; transform: translate(-50%, -8px); } 12%, 85% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; } }
 
-.dpad-btn {
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: transform 0.12s, background 0.12s;
+.safe {
+  --g: clamp(.75rem, 3.5vw, 2.5rem);
+  padding-top: calc(env(safe-area-inset-top) + var(--g));
+  padding-left: calc(env(safe-area-inset-left) + var(--g));
+  padding-right: calc(env(safe-area-inset-right) + var(--g));
 }
-.dpad-btn[data-on='true'] { background: hsl(var(--sig) / 0.3); transform: scale(0.94); }
+.hud-safe {
+  padding: max(.6rem, env(safe-area-inset-top)) max(.6rem, env(safe-area-inset-right)) 0 max(.6rem, env(safe-area-inset-left));
+}
+.range { height: 44px; touch-action: pan-y; }
+@media (hover: none) { .menu-btn:hover { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rise, .fadein, .ping-ring, .neon-title { animation: none !important; } }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: hsl(var(--sig) / 0.3); border-radius: 6px; }

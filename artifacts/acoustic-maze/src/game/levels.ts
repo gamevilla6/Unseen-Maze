@@ -47,7 +47,7 @@ export const LEVELS: LevelDef[] = Array.from({ length: TOTAL_LEVELS }, (_, i) =>
       id, name: `${region} · ${String(id).padStart(2, '0')}`,
       subtitle: water ? 'Tread softly' : 'You are not alone',
       description: water
-        ? 'Waterlogged crypts swallow hurried footsteps. Hold Shift or use stealth to avoid ripples that dampen sonar. Spikes lurk in the side passages.'
+        ? 'Waterlogged crypts swallow hurried footsteps. Use short, gentle swipes to move quietly and avoid ripples that dampen sonar. Spikes lurk in the side passages.'
         : 'Security drones investigate sonar waves while laser grids shift on a timed cycle. Cross when the lasers dim and do not call a drone to your position.',
       size: 8 + Math.floor(local / 8), theme: water ? 'water' : 'cyber', tier: 'hard',
       difficulty: 'Hard', region, corridorWidth: 2.2,

@@ -1,6 +1,6 @@
-# Acoustic Maze
+# Unseen Maze
 
-A browser-based 3D puzzle game in which players use temporary sonar echoes to navigate exactly 99 pitch-black labyrinths.
+A mobile-only browser-based 3D puzzle game in which Android players use touch gestures and temporary sonar echoes to navigate exactly 99 pitch-black labyrinths.
 
 ## Run & Operate
 
@@ -33,11 +33,11 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 ## Product
 
-Exactly 99 progressively unlocked levels: 1–33 Easy / Whispering Caves, 34–66 Medium / Subterranean Vault and Crystal Cavern, 67–90 Hard / Sunken Catacombs and Neon Cyber-Corridors, 91–99 Expert / Void Labyrinth. Easy corridors are wider with slow obstacles and generous step budgets; later tiers add refractive echoes, spikes, stealth-sensitive water, drones, timed lasers and 30-second void reshuffles. The level gallery is paginated. Sonar and footsteps briefly expose geometry; hazards issue proximity warnings. Settings and progress are saved in the browser. English and Hindi interface options, Web Audio soundscapes, and touch/keyboard controls are included.
+Exactly 99 progressively unlocked levels: 1–33 Easy / Whispering Caves, 34–66 Medium / Subterranean Vault and Crystal Cavern, 67–90 Hard / Sunken Catacombs and Neon Cyber-Corridors, 91–99 Expert / Void Labyrinth. Easy corridors are wider with slow obstacles and generous step budgets; later tiers add refractive echoes, spikes, stealth-sensitive water, drones, timed lasers and 30-second void reshuffles. The level gallery is paginated. Sonar and footsteps briefly expose geometry; hazards issue proximity warnings. Settings and progress are saved in the browser. English and Hindi interface options and Web Audio soundscapes are included. Tap to echo, swipe and hold to move, make short swipes to move quietly, and release to stop.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+Unseen Maze is mobile-only and must use touch interactions, not desktop mouse or keyboard gameplay controls. Support Android phones and tablets in both portrait and landscape orientations.
 
 ## Gotchas
 

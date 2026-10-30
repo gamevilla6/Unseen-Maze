@@ -25,7 +25,7 @@ function write(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); }
   catch (error) {
     // Private browsing or a full device should not crash a playable game.
-    console.warn('Acoustic Maze: browser storage unavailable; progress is session-only.', error);
+    console.warn('Unseen Maze: browser storage unavailable; progress is session-only.', error);
   }
 }
 export function loadSettings(): Settings {

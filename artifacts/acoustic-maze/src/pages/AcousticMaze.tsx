@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronLeft, ChevronRight, Ghost, Footprints, Locate, Grid3x3, Lock, LogOut, Pause, Play, Radio, RotateCcw, Settings2, Home, SkipForward } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ChevronRight, Footprints, Hand, Locate, Waves, Grid3x3, Lock, LogOut, Pause, Play, Radio, RotateCcw, Settings2, Home, SkipForward } from 'lucide-react';
 import { LEVELS, type Input, type LevelDef } from '../game/engine';
 import { audio } from '../game/audio';
 import { completeLevel, loadProgress, loadSettings, saveSettings, type Progress, type Settings } from '../game/storage';
 import { SIGNAL_HEX, t as tr, type Strings } from '../i18n';
 import type { HudData } from '../components/GameScene';
 import { Game2D, hasWebGL2, MenuMaze2D, SceneBoundary } from '../components/Fallback2D';
+import { useTouchNavigation } from '../game/useTouchNavigation';
 
 const MenuScene = lazy(() => import('../components/MenuScene'));
 const GameScene = lazy(() => import('../components/GameScene'));
@@ -19,7 +20,7 @@ const WARN_HI: [string, string][] = [
   ['SONAR RECHARGING', 'सोनार चार्ज हो रहा है — अपने कदमों को सुनें'],
   ['SIGNAL DETECTED', 'संकेत पकड़ा गया — ड्रोन जाँच कर रहा है'],
   ['GRAVITATIONAL SHIFT', 'गुरुत्वीय बदलाव — नए रास्ते खोजें'],
-  ['WATER DISTURBED', 'पानी हिला — धीरे चलने के लिए Shift दबाएँ'],
+  ['WATER DISTURBED', 'पानी हिला — धीमे, छोटे स्वाइप से चुपके चलें'],
   ['WALL DETECTED', 'दीवार मिली — दूसरी दिशा आज़माएँ'],
   ['HAZARD NEARBY', 'खतरा पास है — सावधानी से बढ़ें'],
   ['PATH LOST', 'रास्ता खो गया — स्थिर ज़मीन पर लौटे'],
@@ -38,7 +39,7 @@ function localize(s: string, lang: Settings['language']) {
 }
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-export default function AcousticMaze() {
+export default function UnseenMaze() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [progress, setProgress] = useState<Progress>(() => loadProgress());
   const [screen, setScreen] = useState<Screen>('menu');
@@ -53,8 +54,6 @@ export default function AcousticMaze() {
   const [gl, setGl] = useState<boolean>(() => hasWebGL2());
   const inputRef = useRef<Input>({ x: 0, z: 0, stealth: false });
   const sonarReq = useRef(false);
-  const keys = useRef(new Set<string>());
-  const pad = useRef({ x: 0, z: 0, stealth: false });
 
   useEffect(() => { saveSettings(settings); audio.setVolume(settings.volume); document.documentElement.lang = settings.language; }, [settings]);
 
@@ -69,43 +68,33 @@ export default function AcousticMaze() {
     setScreen('game');
   }, [progress.unlocked, unlock]);
 
-  const recompute = useCallback(() => {
-    const k = keys.current;
-    let x = pad.current.x, z = pad.current.z;
-    if (k.has('KeyA') || k.has('ArrowLeft')) x -= 1;
-    if (k.has('KeyD') || k.has('ArrowRight')) x += 1;
-    if (k.has('KeyW') || k.has('ArrowUp')) z -= 1;
-    if (k.has('KeyS') || k.has('ArrowDown')) z += 1;
-    x = Math.max(-1, Math.min(1, x)); z = Math.max(-1, Math.min(1, z));
-    inputRef.current = { x, z, stealth: pad.current.stealth || k.has('ShiftLeft') || k.has('ShiftRight') };
-  }, []);
+  const { touchHandlers, reset, gesture } = useTouchNavigation({ inputRef, sonarReq, enabled: screen === 'game' && !paused && !win && !failed, onGesture: unlock });
+  const resetRef = useRef(reset); resetRef.current = reset;
+  const clearInput = useCallback(() => { resetRef.current(); inputRef.current = { x: 0, z: 0, stealth: false }; sonarReq.current = false; }, []);
+  useEffect(() => { clearInput(); }, [screen, levelId, runKey, clearInput]);
+  useEffect(() => {
+    const on = screen === 'game';
+    document.documentElement.classList.toggle('playing', on);
+    return () => document.documentElement.classList.remove('playing');
+  }, [screen]);
 
   const setPause = useCallback((p: boolean) => {
     setPaused(p);
-    if (p) { audio.suspend(); keys.current.clear(); pad.current = { x: 0, z: 0, stealth: false }; recompute(); }
+    clearInput();
+    if (p) audio.suspend();
     else audio.resume();
-  }, [recompute]);
+  }, [clearInput]);
 
   useEffect(() => {
     if (screen !== 'game') return;
-    const down = (e: KeyboardEvent) => {
-      if (e.code === 'Escape') { if (!win && !failedRef.current) setPause(!pausedRef.current); return; }
-      if (e.code === 'Space') { e.preventDefault(); if (!pausedRef.current) sonarReq.current = true; return; }
-      if (e.code.startsWith('Arrow')) e.preventDefault();
-      keys.current.add(e.code); recompute();
-    };
-    const up = (e: KeyboardEvent) => { keys.current.delete(e.code); recompute(); };
     const hide = () => { if (document.hidden && !winRef.current && !failedRef.current) setPause(true); };
     const blur = () => { if (!winRef.current && !failedRef.current) setPause(true); };
-    window.addEventListener('keydown', down); window.addEventListener('keyup', up);
     document.addEventListener('visibilitychange', hide); window.addEventListener('blur', blur);
     return () => {
-      window.removeEventListener('keydown', down); window.removeEventListener('keyup', up);
       document.removeEventListener('visibilitychange', hide); window.removeEventListener('blur', blur);
     };
-  }, [screen, recompute, setPause, win]);
-  const pausedRef = useRef(paused); pausedRef.current = paused;
-  const winRef = useRef(win); winRef.current = win;
+  }, [screen, setPause]);
+    const winRef = useRef(win); winRef.current = win;
   const failedRef = useRef(failed); failedRef.current = failed;
 
   const onWin = useCallback((r: Win) => {
@@ -117,7 +106,7 @@ export default function AcousticMaze() {
   const startId = Math.min(progress.unlocked, LEVELS.length);
 
   return (
-    <div data-sig={settings.color} className="grain scan relative min-h-[100dvh] w-full overflow-hidden bg-background text-foreground">
+    <div data-sig={settings.color} className="grain scan relative min-h-[100dvh] w-full overflow-x-hidden bg-background text-foreground">
       {screen === 'game' ? (
         <div className="fixed inset-0">
           {(() => {
@@ -125,12 +114,14 @@ export default function AcousticMaze() {
             const flat = <Game2D {...common} label={L.compat} />;
             return gl ? (
               <SceneBoundary fallback={flat} onFail={() => setGl(false)}>
-                <Suspense fallback={<BootSkeleton />}><GameScene {...common} /></Suspense>
+                <Suspense fallback={<BootSkeleton />}><GameScene {...common} onLost={() => setGl(false)} /></Suspense>
               </SceneBoundary>
             ) : flat;
           })()}
-          <GameHud L={L} level={level} hud={hud} lang={settings.language} onPause={() => setPause(true)}
-            onSonar={() => { unlock(); sonarReq.current = true; }} pad={pad} recompute={recompute} />
+          <div data-testid="touch-play-surface" {...touchHandlers} className="absolute inset-0 z-20" style={{ touchAction: 'none', pointerEvents: 'auto', WebkitUserSelect: 'none', userSelect: 'none' }}>
+            <TouchTrace g={gesture} />
+          </div>
+          <GameHud L={L} level={level} hud={hud} lang={settings.language} onPause={() => setPause(true)} stealth={gesture.active && gesture.slow} />
           {failed && (
             <Overlay>
               <p className="font-data text-xs tracking-[0.3em] text-[hsl(var(--sig-red))] uppercase">{L.level} {String(level.id).padStart(2, '0')} / {LEVELS.length} · {L.stepBudget} {hud?.stepLimit}</p>
@@ -214,8 +205,10 @@ function BootSkeleton() {
 
 function Overlay({ children }: { children: ReactNode }) {
   return (
-    <div className="fadein absolute inset-0 z-40 flex items-center justify-center bg-[hsl(230_45%_2%/0.55)] p-4">
-      <div className="glass rise w-full max-w-md rounded-2xl p-6 sm:p-8">{children}</div>
+    <div className="fadein absolute inset-0 z-40 flex items-center justify-center overflow-hidden bg-[hsl(230_45%_2%/0.6)] p-3"
+      style={{ touchAction: 'pan-y', paddingTop: 'max(.75rem, env(safe-area-inset-top))', paddingBottom: 'max(.75rem, env(safe-area-inset-bottom))', paddingLeft: 'max(.75rem, env(safe-area-inset-left))', paddingRight: 'max(.75rem, env(safe-area-inset-right))' }}>
+      <div data-testid="game-overlay-panel" className="glass rise min-h-0 w-full max-w-md overflow-y-auto overscroll-contain rounded-2xl p-[clamp(1rem,4.5vw,2rem)] [&_h2]:text-[clamp(1.9rem,8vw,3rem)]"
+        style={{ maxHeight: 'calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 1.5rem)' }}>{children}</div>
     </div>
   );
 }
@@ -223,7 +216,7 @@ function Overlay({ children }: { children: ReactNode }) {
 function PanelBtn({ children, icon, onClick, primary, testid }: { children: ReactNode; icon: ReactNode; onClick: () => void; primary?: boolean; testid: string }) {
   return (
     <button data-testid={testid} onClick={onClick}
-      className={`group flex items-center gap-3 rounded-lg border px-4 py-3 text-left font-semibold tracking-wide transition-all duration-200 active:scale-[0.98] ${primary ? 'border-[hsl(var(--sig)/0.7)] bg-[hsl(var(--sig)/0.16)] sig-glow hover:bg-[hsl(var(--sig)/0.26)]' : 'border-white/10 bg-white/[0.03] hover:border-[hsl(var(--sig)/0.5)] hover:bg-white/[0.07]'}`}>
+      className={`group flex min-h-12 items-center gap-3 rounded-lg border px-4 py-3 text-left font-semibold tracking-wide transition-all duration-200 active:scale-[0.98] ${primary ? 'border-[hsl(var(--sig)/0.7)] bg-[hsl(var(--sig)/0.16)] sig-glow hover:bg-[hsl(var(--sig)/0.26)]' : 'border-white/10 bg-white/[0.03] hover:border-[hsl(var(--sig)/0.5)] hover:bg-white/[0.07]'}`}>
       <span className="sig-text transition-transform group-hover:scale-110">{icon}</span>{children}
     </button>
   );
@@ -238,19 +231,19 @@ function MenuScreen({ L, startId, progress, onStart, onGo }: { L: Strings; start
     [L.exit, L.exitSub, <LogOut size={20} />, () => onGo('exit'), 'button-exit'],
   ];
   return (
-    <div className="relative z-10 flex min-h-[100dvh] flex-col justify-between gap-8 p-5 sm:p-10 lg:p-14">
+    <div className="safe relative z-10 flex min-h-[100dvh] flex-col justify-between gap-[clamp(1rem,4dvh,2rem)] p-[clamp(1rem,4vw,3.5rem)]">
       <header className="rise flex items-center justify-between font-data text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
         <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[hsl(var(--sig))]" />SONAR ONLINE</span>
         <span data-testid="text-progress">{L.progress} {done}/{LEVELS.length}</span>
       </header>
-      <div className="grid items-end gap-10 lg:grid-cols-[1.3fr_1fr]">
+      <div className="grid items-end gap-[clamp(1rem,4dvh,2.5rem)] landscape:grid-cols-[1.2fr_1fr] md:grid-cols-[1.3fr_1fr]">
         <div>
           <p className="rise font-data text-xs uppercase tracking-[0.4em] sig-text" style={{ animationDelay: '.1s' }}>// {LEVELS.length} {L.chambers} · 0 lux</p>
-          <h1 className="rise mt-3 text-[clamp(3.2rem,12vw,9rem)]" style={{ animationDelay: '.2s' }}>
-            <span className="neon-title block">ACOUSTIC</span>
+          <h1 className="rise mt-3 text-[clamp(2.8rem,min(16vw,15dvh),8rem)]" style={{ animationDelay: '.2s' }}>
+            <span className="neon-title block">UNSEEN</span>
             <span className="neon-outline block tracking-[0.12em]">MAZE</span>
           </h1>
-          <p className="rise mt-5 max-w-md text-lg text-[hsl(214_30%_78%)]" style={{ animationDelay: '.35s' }}>{L.tagline}</p>
+          <p className="rise mt-[clamp(.5rem,2dvh,1.25rem)] max-w-md text-[clamp(1rem,2.4vw,1.125rem)] text-[hsl(214_30%_78%)]" style={{ animationDelay: '.35s' }}>{L.tagline}</p>
           <div className="rise mt-6 max-w-md" style={{ animationDelay: '.4s' }}>
             <div className="flex h-1.5 gap-px overflow-hidden rounded" data-testid="bar-progress">
               {TIERS.map((tr0) => {
@@ -264,9 +257,9 @@ function MenuScreen({ L, startId, progress, onStart, onGo }: { L: Strings; start
             </div>
           </div>
         </div>
-        <nav className="rise glass-soft max-w-md rounded-xl p-2 lg:justify-self-end lg:w-full" style={{ animationDelay: '.45s' }}>
+        <nav className="rise glass-soft max-w-md rounded-xl p-2 landscape:justify-self-end landscape:w-full w-full" style={{ animationDelay: '.45s' }}>
           {items.map(([title, sub, icon, fn, id], i) => (
-            <button key={id} data-testid={id} onClick={fn} className="menu-btn rounded-md">
+            <button key={id} data-testid={id} onClick={fn} className="menu-btn min-h-[52px] rounded-md">
               <span className="font-data text-xs text-muted-foreground">0{i + 1}</span>
               <span className="sig-text">{icon}</span>
               <span className="flex flex-col">
@@ -279,9 +272,8 @@ function MenuScreen({ L, startId, progress, onStart, onGo }: { L: Strings; start
       </div>
       <footer className="rise grid gap-3 text-xs text-muted-foreground sm:flex sm:flex-wrap sm:items-center sm:gap-6" style={{ animationDelay: '.6s' }}>
         <span className="font-data uppercase tracking-[0.25em] sig-text">{L.howTo}</span>
-        <Kbd k="WASD / ←↑→↓" v={L.ctrlMove} /><Kbd k="SPACE / CLICK" v={L.ctrlSonar} />
-        <Kbd k="SHIFT" v={L.ctrlStealth} /><Kbd k="ESC" v={L.ctrlPause} />
-        <span className="sm:basis-full">{L.ctrlTouch}</span>
+        <Kbd k={L.gTap} v={L.ctrlSonar} /><Kbd k={L.gDrag} v={L.ctrlMove} />
+        <Kbd k={L.gSlow} v={L.ctrlStealth} /><Kbd k={L.gTwo} v={L.ctrlTouch} />
         <span className="flex items-center gap-2 sm:basis-full"><Footprints size={14} className="sig-text" />{L.stepHint}</span>
       </footer>
     </div>
@@ -339,11 +331,11 @@ function Gallery({ L, progress, focusId, onBack, onPlay }: { L: Strings; progres
   const tierStart = (id: string) => LEVELS.find((l) => l.tier === id)?.id ?? 1;
   const curTier = slice[0]?.tier;
   return (
-    <div className="relative z-10 mx-auto min-h-[100dvh] max-w-7xl p-5 sm:p-10">
+    <div className="safe relative z-10 mx-auto min-h-[100dvh] max-w-7xl p-[clamp(1rem,4vw,2.5rem)]">
       <div className="rise flex flex-wrap items-end justify-between gap-4">
         <div>
-          <button data-testid="button-back-gallery" onClick={onBack} className="mb-4 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft size={16} />{L.back}</button>
-          <h2 className="neon-title text-4xl sm:text-6xl">{L.gallery}</h2>
+          <button data-testid="button-back-gallery" onClick={onBack} className="mb-2 flex min-h-11 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft size={16} />{L.back}</button>
+          <h2 className="neon-title text-[clamp(2rem,8vw,3.75rem)]">{L.gallery}</h2>
         </div>
         <p className="font-data text-xs uppercase tracking-[0.3em] text-muted-foreground">{L.progress} <span className="sig-text">{Object.keys(progress.completed).length}</span>/{LEVELS.length}</p>
       </div>
@@ -355,7 +347,7 @@ function Gallery({ L, progress, focusId, onBack, onPlay }: { L: Strings; progres
             const on = curTier === tr0.id;
             return (
               <button key={tr0.id} data-testid={`button-tier-${tr0.id}`} onClick={() => setPage(pageOf(tierStart(tr0.id)))}
-                className={`flex flex-col items-start rounded-md px-3 py-2 text-left transition-all ${on ? 'bg-[hsl(var(--sig)/0.18)] sig-glow' : 'text-muted-foreground hover:bg-white/5'}`}>
+                className={`flex min-h-11 flex-col items-start rounded-md px-3 py-2 text-left transition-all ${on ? 'bg-[hsl(var(--sig)/0.18)] sig-glow' : 'text-muted-foreground hover:bg-white/5'}`}>
                 <span className="text-sm font-semibold">{L[tr0.key]}</span>
                 <span className="font-data text-[10px] tracking-widest">{String(lo).padStart(2, '0')}–{String(hi).padStart(2, '0')}{tierStart(tr0.id) > progress.unlocked ? ` · ${L.locked}` : ''}</span>
               </button>
@@ -364,10 +356,10 @@ function Gallery({ L, progress, focusId, onBack, onPlay }: { L: Strings; progres
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="font-data text-xs uppercase tracking-[0.25em] text-muted-foreground" data-testid="text-page-range">{L.page} {page + 1}/{pages} · <span className="sig-text">{String(first).padStart(2, '0')}–{String(last).padStart(2, '0')}</span></p>
-          <button data-testid="button-jump-latest" onClick={() => setPage(pageOf(latest))} className="flex items-center gap-1.5 rounded-md border border-white/10 px-3 py-1.5 font-data text-[11px] uppercase tracking-widest text-muted-foreground transition-colors hover:border-[hsl(var(--sig)/0.5)] hover:text-foreground"><Locate size={13} />{L.jumpLatest} {String(latest).padStart(2, '0')}</button>
+          <button data-testid="button-jump-latest" onClick={() => setPage(pageOf(latest))} className="flex min-h-11 items-center gap-1.5 rounded-md border border-white/10 px-3 py-1.5 font-data text-[11px] uppercase tracking-widest text-muted-foreground transition-colors hover:border-[hsl(var(--sig)/0.5)] hover:text-foreground"><Locate size={13} />{L.jumpLatest} {String(latest).padStart(2, '0')}</button>
         </div>
       </div>
-      <div key={page} className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div key={page} className="mt-6 grid grid-cols-[repeat(auto-fill,minmax(min(100%,9.5rem),1fr))] gap-[clamp(.5rem,2vw,1rem)] md:grid-cols-3 lg:grid-cols-4">
         {slice.map((lv, i) => {
           const locked = lv.id > progress.unlocked;
           const rec = progress.completed[String(lv.id)];
@@ -378,24 +370,24 @@ function Gallery({ L, progress, focusId, onBack, onPlay }: { L: Strings; progres
               style={{ animationDelay: `${i * 0.03}s` }}>
               <div className="relative aspect-[4/3] bg-[hsl(230_45%_3%/0.7)]">
                 <Thumb lv={lv} locked={locked} />
-                <span className="absolute left-3 top-3 font-data text-xs text-muted-foreground">{String(lv.id).padStart(2, '0')}/{LEVELS.length}</span>
-                <span className="absolute right-3 top-3 rounded-full border border-white/10 px-2 py-0.5 font-data text-[10px] uppercase tracking-wider text-muted-foreground">{lv.theme}</span>
+                <span className="absolute left-2 top-2 font-data text-xs text-muted-foreground">{String(lv.id).padStart(2, '0')}/{LEVELS.length}</span>
+                <span className="absolute right-2 top-2 max-w-[55%] truncate rounded-full border border-white/10 px-2 py-0.5 font-data text-[10px] uppercase tracking-wider text-muted-foreground">{lv.theme}</span>
                 {locked && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground"><Lock size={22} /><span className="font-data text-[10px] uppercase tracking-[0.3em]">{L.locked}</span></div>}
               </div>
-              <div className="flex flex-1 flex-col gap-1 p-4">
-                <span className="font-display text-base font-bold leading-tight">{lv.name}</span>
+              <div className="flex min-w-0 flex-1 flex-col gap-1 p-[clamp(.6rem,2.5vw,1rem)]">
+                <span className="font-display text-[clamp(.875rem,3.6vw,1rem)] font-bold leading-tight break-words">{lv.name}</span>
                 <span className="text-xs text-muted-foreground">{lv.region ?? lv.subtitle} · {L[TIERS.find((x) => x.id === lv.tier)?.key ?? 'tierEasy']}</span>
-                <div className="mt-auto flex items-center justify-between pt-3 font-data text-[11px]">
+                <div className="mt-auto flex flex-wrap items-center justify-between gap-1 pt-2 font-data text-[11px]">
                   {rec ? <span className="sig-text">{L.cleared} · {rec.steps} {L.steps.toLowerCase()} · {fmt(rec.seconds)}</span>
                     : <span className="text-muted-foreground">{locked ? L.lockedHint : '—'}</span>}
-                  {!locked && <span className="flex items-center gap-1 uppercase tracking-widest opacity-0 transition-opacity group-hover:opacity-100">{L.play}<ArrowRight size={12} /></span>}
+                  {!locked && <span className="flex items-center gap-1 uppercase tracking-widest opacity-70">{L.play}<ArrowRight size={12} /></span>}
                 </div>
               </div>
             </button>
           );
         })}
       </div>
-      <nav className="flex flex-wrap items-center justify-center gap-2 py-8" aria-label={L.page}>
+      <nav className="flex flex-wrap items-center justify-center gap-2 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]" aria-label={L.page}>
         <button data-testid="button-page-prev" disabled={page === 0} onClick={() => setPage(page - 1)} className="flex h-11 items-center gap-1 rounded-lg border border-white/10 px-3 text-sm transition-colors hover:border-[hsl(var(--sig)/0.5)] disabled:opacity-30"><ChevronLeft size={16} />{L.prevPage}</button>
         <div className="flex flex-wrap justify-center gap-1">
           {Array.from({ length: pages }).map((_, p) => {
@@ -427,7 +419,7 @@ function Seg<T extends string>({ options, value, onChange, testid }: { options: 
     <div className="grid gap-1 rounded-lg border border-white/10 bg-black/20 p-1" style={{ gridTemplateColumns: `repeat(${options.length},1fr)` }}>
       {options.map(([v, l, sw]) => (
         <button key={v} data-testid={`${testid}-${v}`} onClick={() => onChange(v)}
-          className={`flex items-center justify-center gap-2 rounded-md px-2 py-2 text-sm font-semibold transition-all ${value === v ? 'bg-[hsl(var(--sig)/0.18)] sig-glow' : 'text-muted-foreground hover:bg-white/5'}`}>
+          className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-2 py-2 text-sm font-semibold transition-all ${value === v ? 'bg-[hsl(var(--sig)/0.18)] sig-glow' : 'text-muted-foreground hover:bg-white/5'}`}>
           {sw && <span className="h-2.5 w-2.5 rotate-45" style={{ background: sw, boxShadow: `0 0 10px ${sw}` }} />}{l}
         </button>
       ))}
@@ -439,11 +431,11 @@ function SettingsPanel({ L, s, set, onBack }: { L: Strings; s: Settings; set: (s
   const qs: Settings['quality'][] = ['low', 'medium', 'high'];
   const qi = qs.indexOf(s.quality);
   return (
-    <div className="relative z-10 flex min-h-[100dvh] items-center justify-center p-4">
-      <div className="glass rise w-full max-w-lg rounded-2xl p-6 sm:p-8">
-        <button data-testid="button-back-settings" onClick={onBack} className="mb-3 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft size={16} />{L.back}</button>
-        <h2 className="neon-title text-4xl">{L.settings}</h2>
-        <div className="mt-7 space-y-6">
+    <div className="safe relative z-10 flex min-h-[100dvh] items-center justify-center p-3 sm:p-4">
+      <div className="glass rise my-2 w-full max-w-lg rounded-2xl p-[clamp(1rem,4vw,2rem)]">
+        <button data-testid="button-back-settings" onClick={onBack} className="mb-2 flex min-h-11 items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft size={16} />{L.back}</button>
+        <h2 className="neon-title text-[clamp(2rem,8vw,2.5rem)]">{L.settings}</h2>
+        <div className="mt-5 space-y-5">
           <Slider testid="quality" label={L.graphics} value={qi} min={0} max={2} step={1} display={[L.low, L.medium, L.high][qi]} onChange={(v) => set({ ...s, quality: qs[v] })} />
           <Slider testid="intensity" label={L.intensity} value={s.intensity} min={0.2} max={1.5} step={0.05} display={`${Math.round(s.intensity * 100)}%`} onChange={(v) => set({ ...s, intensity: v })} />
           <Slider testid="volume" label={L.volume} value={s.volume} min={0} max={1} step={0.01} display={`${Math.round(s.volume * 100)}%`} onChange={(v) => { set({ ...s, volume: v }); audio.unlock().catch(() => undefined); }} />
@@ -461,111 +453,94 @@ function SettingsPanel({ L, s, set, onBack }: { L: Strings; s: Settings; set: (s
 
 function ExitScreen({ L, onBack }: { L: Strings; onBack: () => void }) {
   return (
-    <div className="relative z-10 flex min-h-[100dvh] items-center justify-center p-4">
-      <div className="glass rise w-full max-w-md rounded-2xl p-8 text-center">
+    <div className="safe relative z-10 flex min-h-[100dvh] items-center justify-center p-3 sm:p-4">
+      <div className="glass rise my-2 w-full max-w-md rounded-2xl p-[clamp(1.25rem,5vw,2rem)] text-center">
         <div className="relative mx-auto mb-6 h-16 w-16">
           <span className="ping-ring absolute inset-0 rounded-full border-2 border-[hsl(var(--sig)/0.6)]" />
           <span className="absolute inset-0 flex items-center justify-center sig-text"><Radio size={26} /></span>
         </div>
-        <h2 className="neon-title text-4xl">{L.exitTitle}</h2>
+        <h2 className="neon-title text-[clamp(2rem,8vw,2.5rem)]">{L.exitTitle}</h2>
         <p className="mt-4 text-muted-foreground">{L.exitBody}</p>
         <div className="mt-8 grid gap-2">
           <PanelBtn testid="button-return" primary icon={<Play size={18} />} onClick={onBack}>{L.returnBtn}</PanelBtn>
-          <PanelBtn testid="button-close-tab" icon={<LogOut size={18} />} onClick={() => window.close()}>{L.closeTry}</PanelBtn>
         </div>
       </div>
     </div>
   );
 }
 
-function GameHud({ L, level, hud, lang, onPause, onSonar, pad, recompute }: {
-  L: Strings; level: LevelDef; hud: HudData | null; lang: Settings['language']; onPause: () => void; onSonar: () => void;
-  pad: React.MutableRefObject<{ x: number; z: number; stealth: boolean }>; recompute: () => void;
-}) {
-  const [held, setHeld] = useState<string>('');
-  const [stealth, setStealth] = useState(false);
-  const [hint, setHint] = useState(true);
-  useEffect(() => { const id = setTimeout(() => setHint(false), 7000); return () => clearTimeout(id); }, [level.id]);
-  const echo = hud ? Math.round(hud.echo) : 100;
-  const press = (d: string, x: number, z: number) => (e: React.PointerEvent) => {
-    e.stopPropagation(); (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    pad.current.x = x; pad.current.z = z; setHeld(d); recompute();
-  };
-  const release = () => { pad.current.x = 0; pad.current.z = 0; setHeld(''); recompute(); };
-  const warning = localize(hud?.warning ?? '', lang);
-  const dirs: [string, number, number, ReactNode, string][] = [
-    ['up', 0, -1, <ArrowUp size={22} />, 'col-start-2 row-start-1'], ['left', -1, 0, <ArrowLeft size={22} />, 'col-start-1 row-start-2'],
-    ['right', 1, 0, <ArrowRight size={22} />, 'col-start-3 row-start-2'], ['down', 0, 1, <ArrowDown size={22} />, 'col-start-2 row-start-3'],
-  ];
+function TouchTrace({ g }: { g: { active: boolean; slow: boolean; originX: number; originY: number; x: number; y: number } }) {
+  if (!g.active) return null;
+  const dx = g.x - g.originX, dy = g.y - g.originY;
+  const len = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
+  const tone = g.slow ? 'hsl(214 60% 94% / 0.45)' : 'hsl(var(--sig) / 0.6)';
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 select-none">
-      <div className="flex items-start justify-between gap-3 p-3 sm:p-5">
-        <div className="glass-soft fadein rounded-xl px-4 py-3">
-          <p className="font-data text-[10px] uppercase tracking-[0.3em] sig-text">{L.level} <span data-testid="text-level-index">{String(level.id).padStart(2, '0')}/{LEVELS.length}</span> · {L[TIERS.find((x) => x.id === level.tier)?.key ?? 'tierEasy']}</p>
-          <p className="font-display text-base font-bold sm:text-lg" data-testid="text-level-name">{level.name}</p>
-          <div className="mt-2 flex gap-5 font-data text-sm">
+    <div className="pointer-events-none absolute inset-0" data-testid="touch-trace" aria-hidden>
+      <span className="absolute h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border" style={{ left: g.originX, top: g.originY, borderColor: tone, borderStyle: g.slow ? 'dashed' : 'solid' }} />
+      <span className="absolute h-px origin-left" style={{ left: g.originX, top: g.originY, width: Math.min(len, 140), transform: `rotate(${ang}rad)`, background: `linear-gradient(90deg, ${tone}, transparent)` }} />
+      <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border" style={{ left: g.x, top: g.y, borderColor: tone }} />
+    </div>
+  );
+}
+
+function GameHud({ L, level, hud, lang, onPause, stealth }: {
+  L: Strings; level: LevelDef; hud: HudData | null; lang: Settings['language']; onPause: () => void; stealth: boolean;
+}) {
+  const [hint, setHint] = useState(true);
+  useEffect(() => { setHint(true); const id = setTimeout(() => setHint(false), 7000); return () => clearTimeout(id); }, [level.id]);
+  const echo = hud ? Math.round(hud.echo) : 100;
+  const left = hud?.stepLimit ? Math.max(0, hud.stepLimit - hud.steps) : null;
+  const warning = localize(hud?.warning ?? '', lang);
+  return (
+    <div className="hud-safe pointer-events-none absolute inset-0 z-30 select-none">
+      <div className="flex items-start justify-between gap-2">
+        <div className="glass-soft fadein min-w-0 rounded-xl px-3 py-2 landscape:max-w-[42vw]">
+          <p className="truncate font-data text-[11px] uppercase tracking-[0.2em] sig-text">{L.level} <span data-testid="text-level-index">{String(level.id).padStart(2, '0')}/{LEVELS.length}</span> · {L[TIERS.find((x) => x.id === level.tier)?.key ?? 'tierEasy']}</p>
+          <p className="truncate font-display text-[clamp(.875rem,3.5vw,1.05rem)] font-bold" data-testid="text-level-name">{level.name}</p>
+          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-data text-sm">
             <Stat k={L.steps} v={String(hud?.steps ?? 0)} id="steps" />
-            <Stat k={L.stepBudget} v={hud?.stepLimit ? `${Math.max(0, hud.stepLimit - hud.steps)} ${L.stepsLeft}` : '—'} id="step-budget" />
-            <Stat k={L.time} v={fmt(hud?.elapsed ?? 0)} id="time" />
-            {level.theme === 'void' && <Stat k="Shift" v={`${Math.ceil(hud?.shiftIn ?? 30)}s`} id="shift" />}
+            <Stat k={L.stepBudget} v={left !== null ? `${left}` : '—'} id="step-budget" warn={left !== null && hud!.stepLimit > 0 && left / hud!.stepLimit < 0.2} />
+            <Stat k={L.echo} v={`${echo}%`} id="echo" warn={echo < 14} />
+            {level.theme === 'void' && <Stat k={L.shift} v={`${Math.ceil(hud?.shiftIn ?? 30)}s`} id="shift" />}
           </div>
-          <div className="mt-2 h-1 w-40 overflow-hidden rounded bg-white/10" data-testid="bar-level-progress"><div className="h-full origin-left bg-[hsl(214_60%_94%/0.6)]" style={{ transform: `scaleX(${level.id / LEVELS.length})` }} /></div>
-          {hud?.stepLimit ? <div className="mt-1 h-1 w-40 overflow-hidden rounded bg-white/10"><div className={`h-full origin-left transition-transform ${hud.steps / hud.stepLimit > 0.8 ? 'bg-[hsl(var(--sig-red))]' : 'bg-[hsl(var(--sig)/0.7)]'}`} style={{ transform: `scaleX(${Math.max(0, 1 - hud.steps / hud.stepLimit)})` }} /></div> : null}
-          <div className="mt-2">
-            <div className="flex justify-between font-data text-[10px] uppercase tracking-widest text-muted-foreground"><span>{L.echo}</span><span data-testid="text-echo" className={echo < 14 ? 'text-[hsl(var(--sig-red))]' : 'sig-text'}>{echo}%</span></div>
-            <div className="mt-1 h-1 w-40 overflow-hidden rounded bg-white/10"><div className="h-full origin-left bg-[hsl(var(--sig))] transition-transform duration-150" style={{ transform: `scaleX(${echo / 100})` }} /></div>
-          </div>
+          <div className="mt-1.5 h-[3px] w-full overflow-hidden rounded bg-white/10"><div className="h-full origin-left bg-[hsl(var(--sig))] transition-transform duration-150" style={{ transform: `scaleX(${echo / 100})` }} /></div>
+          {hud?.stepLimit ? <div className="mt-1 h-[3px] w-full overflow-hidden rounded bg-white/10" data-testid="bar-step-budget"><div className={`h-full origin-left transition-transform ${hud.steps / hud.stepLimit > 0.8 ? 'bg-[hsl(var(--sig-red))]' : 'bg-[hsl(214_60%_94%/0.55)]'}`} style={{ transform: `scaleX(${Math.max(0, 1 - hud.steps / hud.stepLimit)})` }} /></div> : null}
         </div>
-        <div className="flex items-start gap-2">
-          <div className="glass-soft hidden items-center gap-3 rounded-xl px-3 py-2 sm:flex">
+        <div className="flex shrink-0 items-start gap-2">
+          <div className="glass-soft flex items-center gap-2 rounded-xl p-1.5 md:px-3" title={localize(hud?.guidance ?? '', lang)}>
             <Compass a={hud?.angleToExit ?? 0} />
-            <p className="max-w-[14rem] font-data text-xs text-[hsl(214_30%_80%)]" data-testid="text-guidance">{localize(hud?.guidance ?? '', lang)}</p>
+            <p className="hidden max-w-[14rem] font-data text-xs text-[hsl(214_30%_80%)] md:block" data-testid="text-guidance">{localize(hud?.guidance ?? '', lang)}</p>
           </div>
           <button data-testid="button-pause" onClick={(e) => { e.stopPropagation(); onPause(); }} onPointerDown={(e) => e.stopPropagation()}
-            className="glass-soft pointer-events-auto flex h-12 w-12 items-center justify-center rounded-xl transition-all hover:border-[hsl(var(--sig)/0.6)] active:scale-95" aria-label="Pause"><Pause size={20} /></button>
+            className="glass-soft pointer-events-auto flex h-12 w-12 items-center justify-center rounded-xl active:scale-95" aria-label={L.ctrlPause}><Pause size={20} /></button>
         </div>
-      </div>
-      <div className="glass-soft mx-3 flex items-center gap-3 rounded-xl px-3 py-2 sm:hidden">
-        <Compass a={hud?.angleToExit ?? 0} />
-        <p className="font-data text-[11px] text-[hsl(214_30%_80%)]">{localize(hud?.guidance ?? '', lang)}</p>
       </div>
       {warning && (
-        <div key={warning} className="absolute left-1/2 top-[38%] -translate-x-1/2 rounded-md border border-[hsl(var(--sig-red)/0.6)] bg-[hsl(353_80%_10%/0.7)] px-4 py-2 font-data text-xs uppercase tracking-widest text-[hsl(353_100%_80%)] backdrop-blur" style={{ animation: 'warn 1.6s ease both' }} data-testid="text-warning">{warning}</div>
+        <div key={warning} className="absolute left-1/2 top-[30%] max-w-[88vw] -translate-x-1/2 rounded-md border border-[hsl(var(--sig-red)/0.6)] bg-[hsl(353_80%_10%/0.7)] px-3 py-2 text-center font-data text-xs uppercase tracking-widest text-[hsl(353_100%_80%)] backdrop-blur" style={{ animation: 'warn 1.6s ease both' }} data-testid="text-warning">{warning}</div>
       )}
-      {hint && (
-        <div className="fadein absolute bottom-40 left-1/2 hidden -translate-x-1/2 gap-5 rounded-full px-5 py-2 text-xs text-muted-foreground glass-soft md:flex">
-          <Kbd k="WASD" v={L.ctrlMove} /><Kbd k="SPACE" v={L.ctrlSonar} /><Kbd k="SHIFT" v={L.ctrlStealth} /><Kbd k="ESC" v={L.ctrlPause} />
-        </div>
-      )}
-      <div className="absolute inset-x-0 bottom-0 flex items-end justify-between p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6">
-        <div className="pointer-events-auto grid grid-cols-3 grid-rows-3 gap-1.5" onPointerDown={(e) => e.stopPropagation()}>
-          {dirs.map(([d, x, z, ic, pos]) => (
-            <button key={d} data-testid={`button-dpad-${d}`} data-on={held === d} aria-label={d}
-              onPointerDown={press(d, x, z)} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={release}
-              className={`dpad-btn glass-soft flex h-14 w-14 items-center justify-center rounded-xl ${pos}`}>{ic}</button>
-          ))}
-          <button data-testid="button-stealth" data-on={stealth} aria-label={L.stealth}
-            onPointerDown={(e) => { e.stopPropagation(); const n = !stealth; setStealth(n); pad.current.stealth = n; recompute(); }}
-            className="dpad-btn col-start-2 row-start-2 flex h-14 w-14 items-center justify-center rounded-xl border border-white/10 text-muted-foreground"><Ghost size={20} /></button>
-        </div>
-        <button data-testid="button-sonar" aria-label={L.sonar}
-          onPointerDown={(e) => { e.stopPropagation(); onSonar(); }}
-          className="pointer-events-auto relative flex h-24 w-24 items-center justify-center rounded-full border-2 border-[hsl(var(--sig)/0.8)] bg-[hsl(var(--sig)/0.12)] sig-glow backdrop-blur transition-transform active:scale-90">
-          <span className="ping-ring absolute inset-0 rounded-full border border-[hsl(var(--sig)/0.5)]" />
-          <span className="flex flex-col items-center gap-0.5"><Radio size={26} className="sig-text" /><span className="font-data text-[10px] uppercase tracking-widest">{L.sonar}</span></span>
-        </button>
+      <div className="absolute inset-x-0 bottom-[max(.75rem,env(safe-area-inset-bottom))] flex flex-col items-center gap-2 px-3">
+        <span data-testid="gesture-stealth" aria-live="polite" className={`flex items-center gap-2 rounded-full border px-3 py-1 font-data text-[11px] uppercase tracking-[0.25em] transition-opacity duration-200 ${stealth ? 'opacity-100 border-[hsl(214_60%_94%/0.4)] bg-black/60 text-[hsl(214_60%_94%)]' : 'opacity-0 border-transparent'}`}>
+          <Footprints size={13} />{L.stealthActive}
+        </span>
+        {hint && (
+          <div className="fadein glass-soft flex max-w-[94vw] flex-wrap justify-center gap-x-4 gap-y-1 rounded-2xl px-4 py-2 text-xs text-muted-foreground" data-testid="text-touch-hint">
+            <span className="flex items-center gap-1.5"><Waves size={13} className="sig-text" />{L.gTap}</span>
+            <span className="flex items-center gap-1.5"><Hand size={13} className="sig-text" />{L.gDrag}</span>
+            <span className="flex items-center gap-1.5"><Footprints size={13} className="sig-text" />{L.gSlow}</span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function Stat({ k, v, id }: { k: string; v: string; id: string }) {
-  return <div><div className="text-base leading-none" data-testid={`text-${id}`}>{v}</div><div className="mt-1 text-[10px] uppercase tracking-widest text-muted-foreground">{k}</div></div>;
+function Stat({ k, v, id, warn }: { k: string; v: string; id: string; warn?: boolean }) {
+  return <div><div className={`text-base leading-none ${warn ? 'text-[hsl(var(--sig-red))]' : ''}`} data-testid={`text-${id}`}>{v}</div><div className="mt-1 text-[10px] uppercase tracking-widest text-muted-foreground">{k}</div></div>;
 }
 
 function Compass({ a }: { a: number }) {
   return (
-    <svg viewBox="0 0 40 40" className="h-10 w-10 shrink-0" data-testid="img-compass">
+    <svg viewBox="0 0 40 40" className="h-9 w-9 shrink-0" data-testid="img-compass">
       <circle cx="20" cy="20" r="18" fill="none" stroke="hsl(214 50% 70% / 0.25)" />
       {[0, 90, 180, 270].map((d) => <line key={d} x1="20" y1="3" x2="20" y2="6" stroke="hsl(214 50% 70% / 0.5)" transform={`rotate(${d} 20 20)`} />)}
       <g style={{ transform: `rotate(${(a * 180) / Math.PI}deg)`, transformOrigin: '20px 20px', transition: 'transform .2s' }}>
