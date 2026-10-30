@@ -7,6 +7,8 @@ A browser-based 3D puzzle game in which players use temporary sonar echoes to na
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm --filter @workspace/acoustic-maze run dev` — game frontend; use its managed workflow to supply routing and port configuration
 - `pnpm run typecheck` — full typecheck across all packages
+- `pnpm --filter @workspace/acoustic-maze test` — deterministic maze simulations (all 15 levels, collisions, lasers, acoustics, repeated void shifts; Node.js 24, no browser required)
+- `pnpm --filter @workspace/acoustic-maze typecheck:tests` — typecheck the simulation suite
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
