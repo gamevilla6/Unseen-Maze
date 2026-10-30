@@ -1,0 +1,1 @@
+- [Graphics compatibility](graphics-compatibility.md) — why Acoustic Maze keeps a playable fallback when WebGL is unavailable.

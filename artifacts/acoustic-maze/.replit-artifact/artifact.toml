@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Acoustic Maze"
+description = "A 15-level atmospheric 3D echolocation puzzle game. Navigate pitch-black labyrinths using sonar pulses, avoid acoustic hazards, and explore five special environments with saved progress and customizable audio and visuals."
+version = "1.0.0"
+id = "artifacts/acoustic-maze"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24333
+
+[services.development]
+run = "pnpm --filter @workspace/acoustic-maze run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/acoustic-maze", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/acoustic-maze/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24333"
+BASE_PATH = "/"

@@ -1,10 +1,11 @@
-# [Project name]
+# Acoustic Maze
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A browser-based 3D puzzle game in which players use temporary sonar echoes to navigate fifteen pitch-black labyrinths.
 
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/acoustic-maze run dev` — game frontend; use its managed workflow to supply routing and port configuration
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
@@ -30,7 +31,7 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Fifteen progressively unlocked levels, including the Subterranean Vault, Crystal Cavern, Sunken Catacombs, Neon Cyber-Corridor, and Void Labyrinth. Sonar and footsteps briefly expose geometry; hazards issue proximity warnings. Settings and progress are saved in the browser. English and Hindi interface options, Web Audio soundscapes, and touch/keyboard controls are included.
 
 ## User preferences
 
