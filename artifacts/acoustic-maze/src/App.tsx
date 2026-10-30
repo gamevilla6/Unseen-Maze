@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import AcousticMaze from '@/pages/AcousticMaze';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import { useHashLocation } from 'wouter/use-hash-location';
 
 const queryClient = new QueryClient();
 
@@ -29,7 +30,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <WouterRouter hook={useHashLocation}>
           <Router />
         </WouterRouter>
         <Toaster />

@@ -1,2 +1,3 @@
 - [Graphics compatibility](graphics-compatibility.md) — why Acoustic Maze keeps a playable fallback when WebGL is unavailable.
 - [Campaign continuity](campaign-continuity.md) — preserve earned numeric progress when expanding or regrouping the campaign.
+- [Static hosting portability](static-hosting.md) — verify production output under a repository prefix; a development preview cannot prove Pages compatibility.

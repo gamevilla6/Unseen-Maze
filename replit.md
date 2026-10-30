@@ -41,7 +41,11 @@ Unseen Maze is mobile-only and must use touch interactions, not desktop mouse or
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+GitHub Pages compatibility is a product requirement: keep a repository-root
+`index.html`, relative production assets, and no required Replit runtime services.
+Publish compiled output using the Pages Actions workflow, not raw `.tsx` files.
+The root entry deliberately resolves React from the game's workspace package.
+Hash routing avoids GitHub Pages rewrite requirements. See README.md for setup.
 
 ## Pointers
 
